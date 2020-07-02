@@ -19,120 +19,144 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
-import org.elasticsearch.painless.Definition.MethodKey;
 import org.elasticsearch.painless.FunctionRef;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
-import org.objectweb.asm.Type;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.DefInterfaceReferenceNode;
+import org.elasticsearch.painless.ir.TypedCaptureReferenceNode;
+import org.elasticsearch.painless.ir.TypedInterfaceReferenceNode;
+import org.elasticsearch.painless.lookup.def;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.Decorations.ValueType;
+import org.elasticsearch.painless.symbol.Decorations.Write;
+import org.elasticsearch.painless.symbol.ScriptScope;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
-import java.lang.invoke.LambdaMetafactory;
 import java.util.Objects;
-import java.util.Set;
-
-import static org.elasticsearch.painless.WriterConstants.LAMBDA_BOOTSTRAP_HANDLE;
 
 /**
  * Represents a function reference.
  */
-public final class EFunctionRef extends AExpression implements ILambda {
-    private final String type;
-    private final String call;
+public class EFunctionRef extends AExpression {
 
-    private FunctionRef ref;
-    private String defPointer;
+    private final String symbol;
+    private final String methodName;
 
-    public EFunctionRef(Location location, String type, String call) {
-        super(location);
+    public EFunctionRef(int identifier, Location location, String symbol, String methodName) {
+        super(identifier, location);
 
-        this.type = Objects.requireNonNull(type);
-        this.call = Objects.requireNonNull(call);
+        this.symbol = Objects.requireNonNull(symbol);
+        this.methodName = Objects.requireNonNull(methodName);
+    }
+
+    public String getSymbol() {
+        return symbol;
+    }
+
+    public String getCall() {
+        return methodName;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {}
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        ScriptScope scriptScope = semanticScope.getScriptScope();
+        boolean read = semanticScope.getCondition(this, Read.class);
+        TargetType targetType = semanticScope.getDecoration(this, TargetType.class);
 
-    @Override
-    void analyze(Locals locals) {
-        if (expected == null) {
-            ref = null;
-            actual = Definition.getType("String");
-            defPointer = "S" + type + "." + call + ",0";
-        } else {
-            defPointer = null;
-            try {
-                if ("this".equals(type)) {
-                    // user's own function
-                    Method interfaceMethod = expected.struct.getFunctionalMethod();
-                    if (interfaceMethod == null) {
-                        throw new IllegalArgumentException("Cannot convert function reference [" + type + "::" + call + "] " +
-                                                           "to [" + expected.name + "], not a functional interface");
-                    }
-                    Method implMethod = locals.getMethod(new MethodKey(call, interfaceMethod.arguments.size()));
-                    if (implMethod == null) {
-                        throw new IllegalArgumentException("Cannot convert function reference [" + type + "::" + call + "] " +
-                                                           "to [" + expected.name + "], function not found");
-                    }
-                    ref = new FunctionRef(expected, interfaceMethod, implMethod, 0);
-                } else {
-                    // whitelist lookup
-                    ref = new FunctionRef(expected, type, call, 0);
-                }
-            } catch (IllegalArgumentException e) {
-                throw createError(e);
+        Output output = new Output();
+        Class<?> valueType;
+        Class<?> type = scriptScope.getPainlessLookup().canonicalTypeNameToType(symbol);
+
+        if (symbol.equals("this") || type != null)  {
+            if (semanticScope.getCondition(this, Write.class)) {
+                throw createError(new IllegalArgumentException(
+                        "invalid assignment: cannot assign a value to function reference [" + symbol + ":" + methodName + "]"));
             }
-            actual = expected;
-        }
-    }
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        if (ref != null) {
-            writer.writeDebugInfo(location);
-            // convert MethodTypes to asm Type for the constant pool.
-            String invokedType = ref.invokedType.toMethodDescriptorString();
-            Type samMethodType = Type.getMethodType(ref.samMethodType.toMethodDescriptorString());
-            Type interfaceType = Type.getMethodType(ref.interfaceMethodType.toMethodDescriptorString());
-            if (ref.needsBridges()) {
-                writer.invokeDynamic(ref.invokedName,
-                                     invokedType,
-                                     LAMBDA_BOOTSTRAP_HANDLE,
-                                     samMethodType,
-                                     ref.implMethodASM,
-                                     samMethodType,
-                                     LambdaMetafactory.FLAG_BRIDGES,
-                                     1,
-                                     interfaceType);
+            if (read == false) {
+                throw createError(new IllegalArgumentException(
+                        "not a statement: function reference [" + symbol + ":" + methodName + "] not used"));
+            }
+
+            if (targetType == null) {
+                valueType = String.class;
+                String defReferenceEncoding = "S" + symbol + "." + methodName + ",0";
+
+                DefInterfaceReferenceNode defInterfaceReferenceNode = new DefInterfaceReferenceNode();
+
+                defInterfaceReferenceNode.setLocation(getLocation());
+                defInterfaceReferenceNode.setExpressionType(valueType);
+                defInterfaceReferenceNode.setDefReferenceEncoding(defReferenceEncoding);
+
+                output.expressionNode = defInterfaceReferenceNode;
             } else {
-                writer.invokeDynamic(ref.invokedName,
-                                     invokedType,
-                                     LAMBDA_BOOTSTRAP_HANDLE,
-                                     samMethodType,
-                                     ref.implMethodASM,
-                                     samMethodType,
-                                     0);
+                FunctionRef ref = FunctionRef.create(scriptScope.getPainlessLookup(), scriptScope.getFunctionTable(),
+                        getLocation(), targetType.getTargetType(), symbol, methodName, 0);
+                valueType = targetType.getTargetType();
+
+                TypedInterfaceReferenceNode typedInterfaceReferenceNode = new TypedInterfaceReferenceNode();
+                typedInterfaceReferenceNode.setLocation(getLocation());
+                typedInterfaceReferenceNode.setExpressionType(valueType);
+                typedInterfaceReferenceNode.setReference(ref);
+                output.expressionNode = typedInterfaceReferenceNode;
             }
         } else {
-            // TODO: don't do this: its just to cutover :)
-            writer.push((String)null);
+            if (semanticScope.getCondition(this, Write.class)) {
+                throw createError(new IllegalArgumentException(
+                        "invalid assignment: cannot assign a value to capturing function reference [" + symbol + ":"  + methodName + "]"));
+            }
+
+            if (read == false) {
+                throw createError(new IllegalArgumentException(
+                        "not a statement: capturing function reference [" + symbol + ":"  + methodName + "] not used"));
+            }
+
+            SemanticScope.Variable captured = semanticScope.getVariable(getLocation(), symbol);
+            if (targetType == null) {
+                String defReferenceEncoding;
+                if (captured.getType() == def.class) {
+                    // dynamic implementation
+                    defReferenceEncoding = "D" + symbol + "." + methodName + ",1";
+                } else {
+                    // typed implementation
+                    defReferenceEncoding = "S" + captured.getCanonicalTypeName() + "." + methodName + ",1";
+                }
+                valueType = String.class;
+
+                DefInterfaceReferenceNode defInterfaceReferenceNode = new DefInterfaceReferenceNode();
+
+                defInterfaceReferenceNode.setLocation(getLocation());
+                defInterfaceReferenceNode.setExpressionType(valueType);
+                defInterfaceReferenceNode.addCapture(captured.getName());
+                defInterfaceReferenceNode.setDefReferenceEncoding(defReferenceEncoding);
+                output.expressionNode = defInterfaceReferenceNode;
+            } else {
+                valueType = targetType.getTargetType();
+                // static case
+                if (captured.getType() != def.class) {
+                    FunctionRef ref = FunctionRef.create(scriptScope.getPainlessLookup(), scriptScope.getFunctionTable(), getLocation(),
+                            targetType.getTargetType(), captured.getCanonicalTypeName(), methodName, 1);
+
+                    TypedInterfaceReferenceNode typedInterfaceReferenceNode = new TypedInterfaceReferenceNode();
+                    typedInterfaceReferenceNode.setLocation(getLocation());
+                    typedInterfaceReferenceNode.setExpressionType(valueType);
+                    typedInterfaceReferenceNode.addCapture(captured.getName());
+                    typedInterfaceReferenceNode.setReference(ref);
+                    output.expressionNode = typedInterfaceReferenceNode;
+                } else {
+                    TypedCaptureReferenceNode typedCaptureReferenceNode = new TypedCaptureReferenceNode();
+                    typedCaptureReferenceNode.setLocation(getLocation());
+                    typedCaptureReferenceNode.setExpressionType(valueType);
+                    typedCaptureReferenceNode.addCapture(captured.getName());
+                    typedCaptureReferenceNode.setMethodName(methodName);
+                    output.expressionNode = typedCaptureReferenceNode;
+                }
+            }
         }
-    }
 
-    @Override
-    public String getPointer() {
-        return defPointer;
-    }
+        semanticScope.putDecoration(this, new ValueType(valueType));
 
-    @Override
-    public Type[] getCaptures() {
-        return new Type[0]; // no captures
-    }
-
-    @Override
-    public String toString() {
-        return singleLineToString(type, call);
+        return output;
     }
 }

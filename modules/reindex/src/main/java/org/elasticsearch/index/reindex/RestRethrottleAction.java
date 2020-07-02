@@ -20,33 +20,39 @@
 package org.elasticsearch.index.reindex;
 
 import org.elasticsearch.client.node.NodeClient;
-import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.rest.BaseRestHandler;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.tasks.TaskId;
 
-import java.io.IOException;
+import java.util.List;
+import java.util.function.Supplier;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.action.admin.cluster.RestListTasksAction.listTasksResponseListener;
 
 public class RestRethrottleAction extends BaseRestHandler {
-    private final ClusterService clusterService;
+    private final Supplier<DiscoveryNodes> nodesInCluster;
 
-    @Inject
-    public RestRethrottleAction(Settings settings, RestController controller, ClusterService clusterService) {
-        super(settings);
-        this.clusterService = clusterService;
-        controller.registerHandler(POST, "/_update_by_query/{taskId}/_rethrottle", this);
-        controller.registerHandler(POST, "/_delete_by_query/{taskId}/_rethrottle", this);
-        controller.registerHandler(POST, "/_reindex/{taskId}/_rethrottle", this);
+    public RestRethrottleAction(Supplier<DiscoveryNodes> nodesInCluster) {
+        this.nodesInCluster = nodesInCluster;
     }
 
     @Override
-    public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+    public List<Route> routes() {
+        return List.of(
+            new Route(POST, "/_update_by_query/{taskId}/_rethrottle"),
+            new Route(POST, "/_delete_by_query/{taskId}/_rethrottle"),
+            new Route(POST, "/_reindex/{taskId}/_rethrottle"));
+    }
+
+    @Override
+    public String getName() {
+        return "rethrottle_action";
+    }
+
+    @Override
+    public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) {
         RethrottleRequest internalRequest = new RethrottleRequest();
         internalRequest.setTaskId(new TaskId(request.param("taskId")));
         Float requestsPerSecond = AbstractBaseReindexRestHandler.parseRequestsPerSecond(request);
@@ -56,6 +62,6 @@ public class RestRethrottleAction extends BaseRestHandler {
         internalRequest.setRequestsPerSecond(requestsPerSecond);
         final String groupBy = request.param("group_by", "nodes");
         return channel ->
-            client.execute(RethrottleAction.INSTANCE, internalRequest, listTasksResponseListener(clusterService, groupBy, channel));
+            client.execute(RethrottleAction.INSTANCE, internalRequest, listTasksResponseListener(nodesInCluster, groupBy, channel));
     }
 }

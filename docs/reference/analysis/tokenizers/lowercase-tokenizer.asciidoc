@@ -1,6 +1,8 @@
 [[analysis-lowercase-tokenizer]]
-=== Lowercase Tokenizer
-
+=== Lowercase tokenizer
+++++
+<titleabbrev>Lowercase</titleabbrev>
+++++
 
 The `lowercase` tokenizer, like the
 <<analysis-letter-tokenizer, `letter` tokenizer>> breaks text into terms
@@ -14,7 +16,7 @@ efficient as it performs both steps in a single pass.
 [float]
 === Example output
 
-[source,js]
+[source,console]
 ---------------------------
 POST _analyze
 {
@@ -22,11 +24,10 @@ POST _analyze
   "text": "The 2 QUICK Brown-Foxes jumped over the lazy dog's bone."
 }
 ---------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -110,7 +111,6 @@ POST _analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 

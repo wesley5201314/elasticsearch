@@ -1,5 +1,8 @@
 [[analysis-ngram-tokenizer]]
-=== NGram Tokenizer
+=== N-gram tokenizer
+++++
+<titleabbrev>N-gram</titleabbrev>
+++++
 
 The `ngram` tokenizer first breaks text down into words whenever it encounters
 one of a list of specified characters, then it emits
@@ -17,7 +20,7 @@ With the default settings, the `ngram` tokenizer treats the initial text as a
 single token and produces N-grams with minimum length `1` and maximum length
 `2`:
 
-[source,js]
+[source,console]
 ---------------------------
 POST _analyze
 {
@@ -25,11 +28,10 @@ POST _analyze
   "text": "Quick Fox"
 }
 ---------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -155,7 +157,6 @@ POST _analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 
@@ -192,11 +193,22 @@ Character classes may be any of the following:
 * `whitespace` --  for example `" "` or `"\n"`
 * `punctuation` -- for example `!` or `"`
 * `symbol` --      for example `$` or `√`
+* `custom` --      custom characters which need to be set using the
+`custom_token_chars` setting.
+
+`custom_token_chars`::
+
+    Custom characters that should be treated as part of a token. For example,
+    setting this to `+-_` will make the tokenizer treat the plus, minus and
+    underscore sign  as part of a token.
 
 TIP:  It usually makes sense to set `min_gram` and `max_gram` to the same
 value.  The smaller the length, the more documents will match but the lower
 the quality of the matches.  The longer the length, the more specific the
 matches.  A tri-gram (length `3`) is a good place to start.
+
+The index level setting `index.max_ngram_diff` controls the maximum allowed
+difference between `max_gram` and `min_gram`.
 
 [float]
 === Example configuration
@@ -204,7 +216,7 @@ matches.  A tri-gram (length `3`) is a good place to start.
 In this example, we configure the `ngram` tokenizer to treat letters and
 digits as tokens, and to produce tri-grams (grams of length `3`):
 
-[source,js]
+[source,console]
 ----------------------------
 PUT my_index
 {
@@ -236,11 +248,10 @@ POST my_index/_analyze
   "text": "2 Quick Foxes."
 }
 ----------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -289,7 +300,6 @@ POST my_index/_analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 

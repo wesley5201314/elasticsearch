@@ -42,7 +42,7 @@ public class DeleteByQueryConcurrentTests extends ReindexTestCase {
         List<IndexRequestBuilder> builders = new ArrayList<>();
         for (int i = 0; i < docs; i++) {
             for (int t = 0; t < threads.length; t++) {
-                builders.add(client().prepareIndex("test", "doc").setSource("field", t));
+                builders.add(client().prepareIndex("test").setSource("field", t));
             }
         }
         indexRandom(true, true, true, builders);
@@ -81,7 +81,7 @@ public class DeleteByQueryConcurrentTests extends ReindexTestCase {
 
         List<IndexRequestBuilder> builders = new ArrayList<>();
         for (int i = 0; i < docs; i++) {
-            builders.add(client().prepareIndex("test", "doc", String.valueOf(i)).setSource("foo", "bar"));
+            builders.add(client().prepareIndex("test").setId(String.valueOf(i)).setSource("foo", "bar"));
         }
         indexRandom(true, true, true, builders);
 
@@ -96,7 +96,7 @@ public class DeleteByQueryConcurrentTests extends ReindexTestCase {
                 try {
                     start.await();
 
-                    BulkIndexByScrollResponse response = deleteByQuery().source("test").filter(query).refresh(true).get();
+                    BulkByScrollResponse response = deleteByQuery().source("test").filter(query).refresh(true).get();
                     // Some deletions might fail due to version conflict, but
                     // what matters here is the total of successful deletions
                     deleted.addAndGet(response.getDeleted());

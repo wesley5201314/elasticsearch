@@ -19,72 +19,87 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition.Sort;
-import org.elasticsearch.painless.Definition.Type;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.ExpressionNode;
+import org.elasticsearch.painless.ir.ReturnNode;
+import org.elasticsearch.painless.ir.StatementExpressionNode;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.symbol.Decorations.AllEscape;
+import org.elasticsearch.painless.symbol.Decorations.Internal;
+import org.elasticsearch.painless.symbol.Decorations.LastSource;
+import org.elasticsearch.painless.symbol.Decorations.LoopEscape;
+import org.elasticsearch.painless.symbol.Decorations.MethodEscape;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.Decorations.ValueType;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * Represents the top-level node for an expression as a statement.
  */
-public final class SExpression extends AStatement {
+public class SExpression extends AStatement {
 
-    private AExpression expression;
+    private final AExpression expressionNode;
 
-    public SExpression(Location location, AExpression expression) {
-        super(location);
+    public SExpression(int identifier, Location location, AExpression expressionNode) {
+        super(identifier, location);
 
-        this.expression = Objects.requireNonNull(expression);
+        this.expressionNode = Objects.requireNonNull(expressionNode);
+    }
+
+    public AExpression getExpressionNode() {
+        return expressionNode;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        expression.extractVariables(variables);
-    }
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        Class<?> rtnType = semanticScope.getReturnType();
+        boolean isVoid = rtnType == void.class;
+        boolean lastSource = semanticScope.getCondition(this, LastSource.class);
+        
+        if (lastSource && !isVoid) {
+            semanticScope.setCondition(expressionNode, Read.class);
+        }
+        
+        AExpression.Output expressionOutput = AExpression.analyze(expressionNode, classNode, semanticScope);
+        Class<?> expressionValueType = semanticScope.getDecoration(expressionNode, ValueType.class).getValueType();
 
-    @Override
-    void analyze(Locals locals) {
-        Type rtnType = locals.getReturnType();
-        boolean isVoid = rtnType.sort == Sort.VOID;
+        boolean rtn = lastSource && isVoid == false && expressionValueType != void.class;
+        semanticScope.putDecoration(expressionNode, new TargetType(rtn ? rtnType : expressionValueType));
 
-        expression.read = lastSource && !isVoid;
-        expression.analyze(locals);
-
-        if (!lastSource && !expression.statement) {
-            throw createError(new IllegalArgumentException("Not a statement."));
+        if (rtn) {
+            semanticScope.setCondition(expressionNode, Internal.class);
         }
 
-        boolean rtn = lastSource && !isVoid && expression.actual.sort != Sort.VOID;
+        PainlessCast expressionCast = expressionNode.cast(semanticScope);
 
-        expression.expected = rtn ? rtnType : expression.actual;
-        expression.internal = rtn;
-        expression = expression.cast(locals);
+        Output output = new Output();
 
-        methodEscape = rtn;
-        loopEscape = rtn;
-        allEscape = rtn;
-        statementCount = 1;
-    }
+        if (rtn) {
+            semanticScope.setCondition(this, MethodEscape.class);
+            semanticScope.setCondition(this, LoopEscape.class);
+            semanticScope.setCondition(this, AllEscape.class);
+        }
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeStatementOffset(location);
-        expression.write(writer, globals);
+        ExpressionNode expressionNode = AExpression.cast(expressionOutput.expressionNode, expressionCast);
 
-        if (methodEscape) {
-            writer.returnValue();
+        if (rtn) {
+            ReturnNode returnNode = new ReturnNode();
+            returnNode.setExpressionNode(expressionNode);
+            returnNode.setLocation(getLocation());
+
+            output.statementNode = returnNode;
         } else {
-            writer.writePop(expression.expected.sort.size);
-        }
-    }
+            StatementExpressionNode statementExpressionNode = new StatementExpressionNode();
+            statementExpressionNode.setExpressionNode(expressionNode);
+            statementExpressionNode.setLocation(getLocation());
 
-    @Override
-    public String toString() {
-        return singleLineToString(expression);
+            output.statementNode = statementExpressionNode;
+        }
+
+        return output;
     }
 }

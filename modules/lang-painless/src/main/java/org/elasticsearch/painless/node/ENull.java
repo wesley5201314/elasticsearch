@@ -19,56 +19,57 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.Locals;
-import org.objectweb.asm.Opcodes;
-
-import java.util.Set;
-
-import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.NullNode;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.Decorations.ValueType;
+import org.elasticsearch.painless.symbol.Decorations.Write;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
 /**
  * Represents a null constant.
  */
-public final class ENull extends AExpression {
+public class ENull extends AExpression {
 
-    public ENull(Location location) {
-        super(location);
+    public ENull(int identifier, Location location) {
+        super(identifier, location);
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        // Do nothing.
-    }
-
-    @Override
-    void analyze(Locals locals) {
-        if (!read) {
-            throw createError(new IllegalArgumentException("Must read from null constant."));
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        if (semanticScope.getCondition(this, Write.class)) {
+            throw createError(new IllegalArgumentException("invalid assignment: cannot assign a value to null constant"));
         }
 
-        isNull = true;
+        if (semanticScope.getCondition(this, Read.class) == false) {
+            throw createError(new IllegalArgumentException("not a statement: null constant not used"));
+        }
 
-        if (expected != null) {
-            if (expected.sort.primitive) {
-                throw createError(new IllegalArgumentException("Cannot cast null to a primitive type [" + expected.name + "]."));
+        TargetType targetType = semanticScope.getDecoration(this, TargetType.class);
+
+        Output output = new Output();
+        Class<?> valueType;
+
+        if (targetType != null) {
+            if (targetType.getTargetType().isPrimitive()) {
+                throw createError(new IllegalArgumentException(
+                        "Cannot cast null to a primitive type [" + targetType.getTargetCanonicalTypeName() + "]."));
             }
 
-            actual = expected;
+            valueType = targetType.getTargetType();
         } else {
-            actual = Definition.OBJECT_TYPE;
+            valueType = Object.class;
         }
-    }
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.visitInsn(Opcodes.ACONST_NULL);
-    }
+        semanticScope.putDecoration(this, new ValueType(valueType));
 
-    @Override
-    public String toString() {
-        return singleLineToString();
+        NullNode nullNode = new NullNode();
+        nullNode.setLocation(getLocation());
+        nullNode.setExpressionType(valueType);
+        output.expressionNode = nullNode;
+
+        return output;
     }
 }

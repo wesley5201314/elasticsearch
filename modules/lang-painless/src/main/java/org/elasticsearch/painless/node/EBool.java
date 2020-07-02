@@ -19,104 +19,82 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.Operation;
-import org.elasticsearch.painless.Locals;
-import org.objectweb.asm.Label;
+import org.elasticsearch.painless.ir.BooleanNode;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.Decorations.ValueType;
+import org.elasticsearch.painless.symbol.Decorations.Write;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
 import java.util.Objects;
-import java.util.Set;
-
-import org.elasticsearch.painless.MethodWriter;
-import org.objectweb.asm.Opcodes;
 
 /**
  * Represents a boolean expression.
  */
-public final class EBool extends AExpression {
+public class EBool extends AExpression {
 
+    private final AExpression leftNode;
+    private final AExpression rightNode;
     private final Operation operation;
-    private AExpression left;
-    private AExpression right;
 
-    public EBool(Location location, Operation operation, AExpression left, AExpression right) {
-        super(location);
+    public EBool(int identifier, Location location, AExpression leftNode, AExpression rightNode, Operation operation) {
+        super(identifier, location);
 
         this.operation = Objects.requireNonNull(operation);
-        this.left = Objects.requireNonNull(left);
-        this.right = Objects.requireNonNull(right);
+        this.leftNode = Objects.requireNonNull(leftNode);
+        this.rightNode = Objects.requireNonNull(rightNode);
+    }
+
+    public AExpression getLeftNode() {
+        return leftNode;
+    }
+
+    public AExpression getRightNode() {
+        return rightNode;
+    }
+
+    public Operation getOperation() {
+        return operation;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        left.extractVariables(variables);
-        right.extractVariables(variables);
-    }
-
-    @Override
-    void analyze(Locals locals) {
-        left.expected = Definition.BOOLEAN_TYPE;
-        left.analyze(locals);
-        left = left.cast(locals);
-
-        right.expected = Definition.BOOLEAN_TYPE;
-        right.analyze(locals);
-        right = right.cast(locals);
-
-        if (left.constant != null && right.constant != null) {
-            if (operation == Operation.AND) {
-                constant = (boolean)left.constant && (boolean)right.constant;
-            } else if (operation == Operation.OR) {
-                constant = (boolean)left.constant || (boolean)right.constant;
-            } else {
-                throw createError(new IllegalStateException("Illegal tree structure."));
-            }
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        if (semanticScope.getCondition(this, Write.class)) {
+            throw createError(new IllegalArgumentException(
+                    "invalid assignment: cannot assign a value to " + operation.name + " operation " + "[" + operation.symbol + "]"));
         }
 
-        actual = Definition.BOOLEAN_TYPE;
-    }
-
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        if (operation == Operation.AND) {
-            Label fals = new Label();
-            Label end = new Label();
-
-            left.write(writer, globals);
-            writer.ifZCmp(Opcodes.IFEQ, fals);
-            right.write(writer, globals);
-            writer.ifZCmp(Opcodes.IFEQ, fals);
-
-            writer.push(true);
-            writer.goTo(end);
-            writer.mark(fals);
-            writer.push(false);
-            writer.mark(end);
-        } else if (operation == Operation.OR) {
-            Label tru = new Label();
-            Label fals = new Label();
-            Label end = new Label();
-
-            left.write(writer, globals);
-            writer.ifZCmp(Opcodes.IFNE, tru);
-            right.write(writer, globals);
-            writer.ifZCmp(Opcodes.IFEQ, fals);
-
-            writer.mark(tru);
-            writer.push(true);
-            writer.goTo(end);
-            writer.mark(fals);
-            writer.push(false);
-            writer.mark(end);
-        } else {
-            throw createError(new IllegalStateException("Illegal tree structure."));
+        if (semanticScope.getCondition(this, Read.class) == false) {
+            throw createError(new IllegalArgumentException(
+                    "not a statement: result not used from " + operation.name + " operation " + "[" + operation.symbol + "]"));
         }
-    }
 
-    @Override
-    public String toString() {
-        return singleLineToString(left, operation.symbol, right);
+        Output output = new Output();
+
+        semanticScope.setCondition(leftNode, Read.class);
+        semanticScope.putDecoration(leftNode, new TargetType(boolean.class));
+        Output leftOutput = analyze(leftNode, classNode, semanticScope);
+        PainlessCast leftCast = leftNode.cast(semanticScope);
+
+        semanticScope.setCondition(rightNode, Read.class);
+        semanticScope.putDecoration(rightNode, new TargetType(boolean.class));
+        Output rightOutput = analyze(rightNode, classNode, semanticScope);
+        PainlessCast rightCast = rightNode.cast(semanticScope);
+
+        semanticScope.putDecoration(this, new ValueType(boolean.class));
+
+        BooleanNode booleanNode = new BooleanNode();
+        booleanNode.setLeftNode(cast(leftOutput.expressionNode, leftCast));
+        booleanNode.setRightNode(cast(rightOutput.expressionNode, rightCast));
+        booleanNode.setLocation(getLocation());
+        booleanNode.setExpressionType(boolean.class);
+        booleanNode.setOperation(operation);
+        output.expressionNode = booleanNode;
+
+        return output;
     }
 }

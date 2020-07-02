@@ -4,35 +4,8 @@
 The Japanese (kuromoji) Analysis plugin integrates Lucene kuromoji analysis
 module into elasticsearch.
 
-[[analysis-kuromoji-install]]
-[float]
-==== Installation
-
-This plugin can be installed using the plugin manager:
-
-[source,sh]
-----------------------------------------------------------------
-sudo bin/elasticsearch-plugin install analysis-kuromoji
-----------------------------------------------------------------
-
-The plugin must be installed on every node in the cluster, and each node must
-be restarted after installation.
-
-This plugin can be downloaded for <<plugin-management-custom-url,offline install>> from
-{plugin_url}/analysis-kuromoji/analysis-kuromoji-{version}.zip.
-
-[[analysis-kuromoji-remove]]
-[float]
-==== Removal
-
-The plugin can be removed with the following command:
-
-[source,sh]
-----------------------------------------------------------------
-sudo bin/elasticsearch-plugin remove analysis-kuromoji
-----------------------------------------------------------------
-
-The node must be stopped before removing the plugin.
+:plugin_name: analysis-kuromoji
+include::install_remove.asciidoc[]
 
 [[analysis-kuromoji-analyzer]]
 ==== `kuromoji` analyzer
@@ -97,7 +70,7 @@ unknown words.  It can be set to:
 
     Extended mode outputs unigrams for unknown words. Example output:
 
-    関西, 国際, 空港
+    関西, 関西国際空港, 国際, 空港
     ア, ブ, ラ, カ, ダ, ブ, ラ
 --
 
@@ -125,6 +98,38 @@ dictionary to `$ES_HOME/config/userdict_ja.txt`:
 東京スカイツリー,東京 スカイツリー,トウキョウ スカイツリー,カスタム名詞
 -----------------------
 
+--
+
+You can also inline the rules directly in the tokenizer definition using
+the `user_dictionary_rules` option:
+
+[source,console]
+--------------------------------------------------
+PUT nori_sample
+{
+  "settings": {
+    "index": {
+      "analysis": {
+        "tokenizer": {
+          "kuromoji_user_dict": {
+            "type": "kuromoji_tokenizer",
+            "mode": "extended",
+            "user_dictionary_rules": ["東京スカイツリー,東京 スカイツリー,トウキョウ スカイツリー,カスタム名詞"]
+          }
+        },
+        "analyzer": {
+          "my_analyzer": {
+            "type": "custom",
+            "tokenizer": "kuromoji_user_dict"
+          }
+        }
+      }
+    }
+  }
+}
+--------------------------------------------------
+--
+
 `nbest_cost`/`nbest_examples`::
 +
 --
@@ -149,7 +154,7 @@ If both parameters are used, the largest number of both is applied.
 
 Then create an analyzer as follows:
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT kuromoji_sample
 {
@@ -181,13 +186,11 @@ GET kuromoji_sample/_analyze
   "text": "東京スカイツリー"
 }
 --------------------------------------------------
-// CONSOLE
 
 The above `analyze` request returns the following:
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
-# Result
 {
   "tokens" : [ {
     "token" : "東京",
@@ -204,7 +207,13 @@ The above `analyze` request returns the following:
   } ]
 }
 --------------------------------------------------
-// TESTRESPONSE
+
+`discard_compound_token`::
+    Whether original compound tokens should be discarded from the output with `search` mode. Defaults to `false`.
+    Example output with `search` or `extended` mode and this option `true`:
+
+    関西, 国際, 空港
+
 
 [[analysis-kuromoji-baseform]]
 ==== `kuromoji_baseform` token filter
@@ -212,7 +221,7 @@ The above `analyze` request returns the following:
 The `kuromoji_baseform` token filter replaces terms with their
 BaseFormAttribute. This acts as a lemmatizer for verbs and adjectives. Example:
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT kuromoji_sample
 {
@@ -238,11 +247,10 @@ GET kuromoji_sample/_analyze
   "text": "飲み"
 }
 --------------------------------------------------
-// CONSOLE
 
 which responds with:
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
 {
   "tokens" : [ {
@@ -254,7 +262,7 @@ which responds with:
   } ]
 }
 --------------------------------------------------
-// TESTRESPONSE
+
 
 [[analysis-kuromoji-speech]]
 ==== `kuromoji_part_of_speech` token filter
@@ -269,7 +277,7 @@ part-of-speech tags. It accepts the following setting:
 
 For example:
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT kuromoji_sample
 {
@@ -304,11 +312,10 @@ GET kuromoji_sample/_analyze
   "text": "寿司がおいしいね"
 }
 --------------------------------------------------
-// CONSOLE
 
 Which responds with:
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
 {
   "tokens" : [ {
@@ -326,7 +333,7 @@ Which responds with:
   } ]
 }
 --------------------------------------------------
-// TESTRESPONSE
+
 
 [[analysis-kuromoji-readingform]]
 ==== `kuromoji_readingform` token filter
@@ -343,7 +350,7 @@ to `true`. The default when defining a custom `kuromoji_readingform`, however,
 is `false`.  The only reason to use the custom form is if you need the
 katakana reading form:
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT kuromoji_sample
 {
@@ -387,7 +394,6 @@ GET kuromoji_sample/_analyze
   "text": "寿司" <2>
 }
 --------------------------------------------------
-// CONSOLE
 
 <1> Returns `スシ`.
 <2> Returns `sushi`.
@@ -407,7 +413,7 @@ This token filter accepts the following setting:
     is `4`).
 
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT kuromoji_sample
 {
@@ -445,7 +451,6 @@ GET kuromoji_sample/_analyze
   "text": "サーバー" <2>
 }
 --------------------------------------------------
-// CONSOLE
 
 <1> Returns `コピー`.
 <2> Return `サーバ`.
@@ -460,7 +465,7 @@ the predefined `_japanese_` stopwords list.  If you want to use a different
 predefined list, then use the
 {ref}/analysis-stop-tokenfilter.html[`stop` token filter] instead.
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT kuromoji_sample
 {
@@ -495,11 +500,10 @@ GET kuromoji_sample/_analyze
   "text": "ストップは消える"
 }
 --------------------------------------------------
-// CONSOLE
 
 The above request returns:
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
 {
   "tokens" : [ {
@@ -511,7 +515,7 @@ The above request returns:
   } ]
 }
 --------------------------------------------------
-// TESTRESPONSE
+
 
 [[analysis-kuromoji-number]]
 ==== `kuromoji_number` token filter
@@ -519,7 +523,7 @@ The above request returns:
 The `kuromoji_number` token filter normalizes Japanese numbers (kansūji)
 to regular Arabic decimal numbers in half-width characters. For example:
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT kuromoji_sample
 {
@@ -545,11 +549,10 @@ GET kuromoji_sample/_analyze
   "text": "一〇〇〇"
 }
 --------------------------------------------------
-// CONSOLE
 
 Which results in:
 
-[source,js]
+[source,console-result]
 --------------------------------------------------
 {
   "tokens" : [ {
@@ -561,4 +564,3 @@ Which results in:
   } ]
 }
 --------------------------------------------------
-// TESTRESPONSE

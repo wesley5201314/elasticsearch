@@ -19,114 +19,130 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.Definition.Sort;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.ConstantNode;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.Decorations.ValueType;
+import org.elasticsearch.painless.symbol.Decorations.Write;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
 import java.util.Objects;
-import java.util.Set;
-
-import org.elasticsearch.painless.Locals;
-import org.elasticsearch.painless.MethodWriter;
 
 /**
  * Represents a non-decimal numeric constant.
  */
-public final class ENumeric extends AExpression {
+public class ENumeric extends AExpression {
 
-    private final String value;
-    private int radix;
+    private final String numeric;
+    private final int radix;
 
-    public ENumeric(Location location, String value, int radix) {
-        super(location);
+    public ENumeric(int identifier, Location location, String numeric, int radix) {
+        super(identifier, location);
 
-        this.value = Objects.requireNonNull(value);
+        this.numeric = Objects.requireNonNull(numeric);
         this.radix = radix;
     }
 
-    @Override
-    void extractVariables(Set<String> variables) {
-        // Do nothing.
+    public String getNumeric() {
+        return numeric;
+    }
+
+    public int getRadix() {
+        return radix;
     }
 
     @Override
-    void analyze(Locals locals) {
-        if (!read) {
-            throw createError(new IllegalArgumentException("Must read from constant [" + value + "]."));
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        return analyze(semanticScope, false);
+    }
+
+    Output analyze(SemanticScope semanticScope, boolean negate) {
+        if (semanticScope.getCondition(this, Write.class)) {
+            throw createError(new IllegalArgumentException(
+                    "invalid assignment: cannot assign a value to numeric constant [" + numeric + "]"));
         }
 
-        if (value.endsWith("d") || value.endsWith("D")) {
+        if (semanticScope.getCondition(this, Read.class) == false) {
+            throw createError(new IllegalArgumentException("not a statement: numeric constant [" + numeric + "] not used"));
+        }
+
+        Output output = new Output();
+        Class<?> valueType;
+        Object constant;
+
+        String numeric = negate ? "-" + this.numeric : this.numeric;
+
+        if (numeric.endsWith("d") || numeric.endsWith("D")) {
             if (radix != 10) {
                 throw createError(new IllegalStateException("Illegal tree structure."));
             }
 
             try {
-                constant = Double.parseDouble(value.substring(0, value.length() - 1));
-                actual = Definition.DOUBLE_TYPE;
+                constant = Double.parseDouble(numeric.substring(0, numeric.length() - 1));
+                valueType = double.class;
             } catch (NumberFormatException exception) {
-                throw createError(new IllegalArgumentException("Invalid double constant [" + value + "]."));
+                throw createError(new IllegalArgumentException("Invalid double constant [" + numeric + "]."));
             }
-        } else if (value.endsWith("f") || value.endsWith("F")) {
+        } else if (numeric.endsWith("f") || numeric.endsWith("F")) {
             if (radix != 10) {
                 throw createError(new IllegalStateException("Illegal tree structure."));
             }
 
             try {
-                constant = Float.parseFloat(value.substring(0, value.length() - 1));
-                actual = Definition.FLOAT_TYPE;
+                constant = Float.parseFloat(numeric.substring(0, numeric.length() - 1));
+                valueType = float.class;
             } catch (NumberFormatException exception) {
-                throw createError(new IllegalArgumentException("Invalid float constant [" + value + "]."));
+                throw createError(new IllegalArgumentException("Invalid float constant [" + numeric + "]."));
             }
-        } else if (value.endsWith("l") || value.endsWith("L")) {
+        } else if (numeric.endsWith("l") || numeric.endsWith("L")) {
             try {
-                constant = Long.parseLong(value.substring(0, value.length() - 1), radix);
-                actual = Definition.LONG_TYPE;
+                constant = Long.parseLong(numeric.substring(0, numeric.length() - 1), radix);
+                valueType = long.class;
             } catch (NumberFormatException exception) {
-                throw createError(new IllegalArgumentException("Invalid long constant [" + value + "]."));
+                throw createError(new IllegalArgumentException("Invalid long constant [" + numeric + "]."));
             }
         } else {
             try {
-                Sort sort = expected == null ? Sort.INT : expected.sort;
-                int integer = Integer.parseInt(value, radix);
+                TargetType targetType = semanticScope.getDecoration(this, TargetType.class);
+                Class<?> sort = targetType == null ? int.class : targetType.getTargetType();
+                int integer = Integer.parseInt(numeric, radix);
 
-                if (sort == Sort.BYTE && integer >= Byte.MIN_VALUE && integer <= Byte.MAX_VALUE) {
+                if (sort == byte.class && integer >= Byte.MIN_VALUE && integer <= Byte.MAX_VALUE) {
                     constant = (byte)integer;
-                    actual = Definition.BYTE_TYPE;
-                } else if (sort == Sort.CHAR && integer >= Character.MIN_VALUE && integer <= Character.MAX_VALUE) {
+                    valueType = byte.class;
+                } else if (sort == char.class && integer >= Character.MIN_VALUE && integer <= Character.MAX_VALUE) {
                     constant = (char)integer;
-                    actual = Definition.CHAR_TYPE;
-                } else if (sort == Sort.SHORT && integer >= Short.MIN_VALUE && integer <= Short.MAX_VALUE) {
+                    valueType = char.class;
+                } else if (sort == short.class && integer >= Short.MIN_VALUE && integer <= Short.MAX_VALUE) {
                     constant = (short)integer;
-                    actual = Definition.SHORT_TYPE;
+                    valueType = short.class;
                 } else {
                     constant = integer;
-                    actual = Definition.INT_TYPE;
+                    valueType = int.class;
                 }
             } catch (NumberFormatException exception) {
                 try {
                     // Check if we can parse as a long. If so then hint that the user might prefer that.
-                    Long.parseLong(value, radix);
-                    throw createError(new IllegalArgumentException("Invalid int constant [" + value + "]. If you want a long constant "
-                            + "then change it to [" + value + "L]."));
+                    Long.parseLong(numeric, radix);
+                    throw createError(new IllegalArgumentException("Invalid int constant [" + numeric + "]. If you want a long constant "
+                            + "then change it to [" + numeric + "L]."));
                 } catch (NumberFormatException longNoGood) {
                     // Ignored
                 }
-                throw createError(new IllegalArgumentException("Invalid int constant [" + value + "]."));
+                throw createError(new IllegalArgumentException("Invalid int constant [" + numeric + "]."));
             }
         }
-    }
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        throw createError(new IllegalStateException("Illegal tree structure."));
-    }
+        semanticScope.putDecoration(this, new ValueType(valueType));
 
-    @Override
-    public String toString() {
-        if (radix != 10) {
-            return singleLineToString(value, radix);
-        }
-        return singleLineToString(value);
+        ConstantNode constantNode = new ConstantNode();
+        constantNode.setLocation(getLocation());
+        constantNode.setExpressionType(valueType);
+        constantNode.setConstant(constant);
+        output.expressionNode = constantNode;
+
+        return output;
     }
 }

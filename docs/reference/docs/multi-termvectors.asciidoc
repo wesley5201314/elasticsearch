@@ -1,122 +1,156 @@
 [[docs-multi-termvectors]]
-== Multi termvectors API
+=== Multi term vectors API
+++++
+<titleabbrev>Multi term vectors</titleabbrev>
+++++
 
-Multi termvectors API allows to get multiple termvectors at once. The
-documents from which to retrieve the term vectors are specified by an index,
-type and id. But the documents could also be artificially provided in the request itself.
+Retrieves multiple term vectors with a single request. 
 
-The response includes a `docs`
-array with all the fetched termvectors, each element having the structure
-provided by the <<docs-termvectors,termvectors>>
-API. Here is an example:
-
-[source,js]
+[source,console]
 --------------------------------------------------
-curl 'localhost:9200/_mtermvectors' -d '{
+POST /_mtermvectors
+{
    "docs": [
       {
-         "_index": "testidx",
-         "_type": "test",
+         "_index": "twitter",
          "_id": "2",
          "term_statistics": true
       },
       {
-         "_index": "testidx",
-         "_type": "test",
+         "_index": "twitter",
          "_id": "1",
          "fields": [
-            "text"
+            "message"
          ]
       }
    ]
-}'
+}
 --------------------------------------------------
+// TEST[setup:twitter]
 
-See the <<docs-termvectors,termvectors>> API for a description of possible parameters.
+[[docs-multi-termvectors-api-request]]
+==== {api-request-title}
 
-The `_mtermvectors` endpoint can also be used against an index (in which case it
-is not required in the body):
+`POST /_mtermvectors`
 
-[source,js]
+`POST /<index>/_mtermvectors`
+
+[[docs-multi-termvectors-api-desc]]
+==== {api-description-title}
+
+You can specify existing documents by index and ID or 
+provide artificial documents in the body of the request.  
+The index can be specified the body of the request or in the request URI.
+
+The response contains a `docs` array with all the fetched termvectors. 
+Each element has the structure provided by the <<docs-termvectors,termvectors>>
+API. 
+
+See the <<docs-termvectors,termvectors>> API for more information about the information
+that can be included in the response.  
+
+[[docs-multi-termvectors-api-path-params]]
+==== {api-path-parms-title}
+
+`<index>`::
+(Optional, string) Name of the index that contains the documents.
+
+[[docs-multi-termvectors-api-query-params]]
+==== {api-query-parms-title}
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=fields]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=field_statistics]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=offsets]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=payloads]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=positions]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=preference]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=routing]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=realtime]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=term_statistics]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=version]
+
+include::{es-repo-dir}/rest-api/common-parms.asciidoc[tag=version_type]
+
+[float]
+[[docs-multi-termvectors-api-example]]
+==== {api-examples-title}
+
+If you specify an index in the request URI, the index does not need to be specified for each documents
+in the request body:
+
+[source,console]
 --------------------------------------------------
-curl 'localhost:9200/testidx/_mtermvectors' -d '{
+POST /twitter/_mtermvectors
+{
    "docs": [
       {
-         "_type": "test",
          "_id": "2",
          "fields": [
-            "text"
+            "message"
          ],
          "term_statistics": true
       },
       {
-         "_type": "test",
          "_id": "1"
       }
    ]
-}'
+}
 --------------------------------------------------
+// TEST[setup:twitter]
 
-And type:
+If all requested documents are in same index and the parameters are the same, you can use the
+following simplified syntax:
 
-[source,js]
+[source,console]
 --------------------------------------------------
-curl 'localhost:9200/testidx/test/_mtermvectors' -d '{
-   "docs": [
-      {
-         "_id": "2",
-         "fields": [
-            "text"
-         ],
-         "term_statistics": true
-      },
-      {
-         "_id": "1"
-      }
-   ]
-}'
---------------------------------------------------
-
-If all requested documents are on same index and have same type and also the parameters are the same, the request can be simplified:
-
-[source,js]
---------------------------------------------------
-curl 'localhost:9200/testidx/test/_mtermvectors' -d '{
+POST /twitter/_mtermvectors
+{
     "ids" : ["1", "2"],
     "parameters": {
     	"fields": [
-         	"text"
+         	"message"
       	],
-      	"term_statistics": true,
-      	…
+      	"term_statistics": true
     }
-}'
+}
 --------------------------------------------------
+// TEST[setup:twitter]
 
-Additionally, just like for the <<docs-termvectors,termvectors>>
-API, term vectors could be generated for user provided documents.  The mapping used is
-determined by `_index` and `_type`.
+[[docs-multi-termvectors-artificial-doc]]
+===== Artificial documents
 
-[source,js]
+You can also use `mtermvectors` to generate term vectors for _artificial_ documents provided
+in the body of the request. The mapping used is determined by the specified `_index`.
+
+[source,console]
 --------------------------------------------------
-curl 'localhost:9200/_mtermvectors' -d '{
+POST /_mtermvectors
+{
    "docs": [
       {
-         "_index": "testidx",
-         "_type": "test",
+         "_index": "twitter",
          "doc" : {
-            "fullname" : "John Doe",
-            "text" : "twitter test test test"
+            "user" : "John Doe",
+            "message" : "twitter test test test"
          }
       },
       {
-         "_index": "testidx",
-         "_type": "test",
+         "_index": "twitter",
          "doc" : {
-           "fullname" : "Jane Doe",
-           "text" : "Another twitter test ..."
+           "user" : "Jane Doe",
+           "message" : "Another twitter test ..."
          }
       }
    ]
-}'
+}
 --------------------------------------------------
+// TEST[setup:twitter]

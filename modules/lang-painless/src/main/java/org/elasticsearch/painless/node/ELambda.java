@@ -19,27 +19,31 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
-import org.elasticsearch.painless.Definition.Type;
 import org.elasticsearch.painless.FunctionRef;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
-import org.elasticsearch.painless.Locals.Variable;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
-import org.elasticsearch.painless.node.SFunction.FunctionReserved;
-import org.objectweb.asm.Opcodes;
+import org.elasticsearch.painless.ir.BlockNode;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.DefInterfaceReferenceNode;
+import org.elasticsearch.painless.ir.FunctionNode;
+import org.elasticsearch.painless.ir.ReferenceNode;
+import org.elasticsearch.painless.ir.TypedInterfaceReferenceNode;
+import org.elasticsearch.painless.lookup.PainlessMethod;
+import org.elasticsearch.painless.lookup.def;
+import org.elasticsearch.painless.symbol.Decorations.LastSource;
+import org.elasticsearch.painless.symbol.Decorations.MethodEscape;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.Decorations.ValueType;
+import org.elasticsearch.painless.symbol.Decorations.Write;
+import org.elasticsearch.painless.symbol.ScriptScope;
+import org.elasticsearch.painless.symbol.SemanticScope;
+import org.elasticsearch.painless.symbol.SemanticScope.LambdaScope;
+import org.elasticsearch.painless.symbol.SemanticScope.Variable;
 
-import java.lang.invoke.LambdaMetafactory;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
-
-import static org.elasticsearch.painless.WriterConstants.LAMBDA_BOOTSTRAP_HANDLE;
 
 /**
  * Lambda expression node.
@@ -64,190 +68,192 @@ import static org.elasticsearch.painless.WriterConstants.LAMBDA_BOOTSTRAP_HANDLE
  * <br>
  * {@code sort(list, lambda$0(capture))}
  */
-public final class ELambda extends AExpression implements ILambda {
+public class ELambda extends AExpression {
 
-    private final String name;
-    private final FunctionReserved reserved;
-    private final List<String> paramTypeStrs;
-    private final List<String> paramNameStrs;
-    private final List<AStatement> statements;
+    private final List<String> canonicalTypeNameParameters;
+    private final List<String> parameterNames;
+    private final SBlock blockNode;
 
-    // desugared synthetic method (lambda body)
-    private SFunction desugared;
-    // captured variables
-    private List<Variable> captures;
-    // static parent, static lambda
-    private FunctionRef ref;
-    // dynamic parent, deferred until link time
-    private String defPointer;
+    public ELambda(int identifier, Location location,
+            List<String> canonicalTypeNameParameters, List<String> parameterNames, SBlock blockNode) {
 
-    public ELambda(String name, FunctionReserved reserved,
-                   Location location, List<String> paramTypes, List<String> paramNames,
-                   List<AStatement> statements) {
-        super(location);
-        this.name = Objects.requireNonNull(name);
-        this.reserved = Objects.requireNonNull(reserved);
-        this.paramTypeStrs = Collections.unmodifiableList(paramTypes);
-        this.paramNameStrs = Collections.unmodifiableList(paramNames);
-        this.statements = Collections.unmodifiableList(statements);
+        super(identifier, location);
+
+        this.canonicalTypeNameParameters = Collections.unmodifiableList(Objects.requireNonNull(canonicalTypeNameParameters));
+        this.parameterNames = Collections.unmodifiableList(Objects.requireNonNull(parameterNames));
+        this.blockNode = Objects.requireNonNull(blockNode);
+    }
+
+    public List<String> getCanonicalTypeNameParameters() {
+        return canonicalTypeNameParameters;
+    }
+
+    public List<String> getParameterNames() {
+        return parameterNames;
+    }
+
+    public SBlock getBlockNode() {
+        return blockNode;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        for (AStatement statement : statements) {
-            statement.extractVariables(variables);
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        if (semanticScope.getCondition(this, Write.class)) {
+            throw createError(new IllegalArgumentException("invalid assignment: cannot assign a value to a lambda"));
         }
-    }
 
-    @Override
-    void analyze(Locals locals) {
-        final Type returnType;
-        final List<String> actualParamTypeStrs;
-        Method interfaceMethod;
+        if (semanticScope.getCondition(this, Read.class) == false) {
+            throw createError(new IllegalArgumentException("not a statement: lambda not used"));
+        }
+
+        ScriptScope scriptScope = semanticScope.getScriptScope();
+        TargetType targetType = semanticScope.getDecoration(this, TargetType.class);
+
+        String name;
+        Class<?> returnType;
+        List<Class<?>> typeParametersWithCaptures;
+        List<String> parameterNames;
+        int maxLoopCounter;
+
+        Output output = new Output();
+        Class<?> valueType;
+
+        List<Class<?>> typeParameters;
+        PainlessMethod interfaceMethod;
         // inspect the target first, set interface method if we know it.
-        if (expected == null) {
-            interfaceMethod = null;
+        if (targetType == null) {
             // we don't know anything: treat as def
-            returnType = Definition.DEF_TYPE;
-            // don't infer any types
-            actualParamTypeStrs = paramTypeStrs;
+            returnType = def.class;
+            // don't infer any types, replace any null types with def
+            typeParameters = new ArrayList<>(canonicalTypeNameParameters.size());
+            for (String type : canonicalTypeNameParameters) {
+                if (type == null) {
+                    typeParameters.add(def.class);
+                } else {
+                    Class<?> typeParameter = scriptScope.getPainlessLookup().canonicalTypeNameToType(type);
+
+                    if (typeParameter == null) {
+                        throw createError(new IllegalArgumentException("cannot resolve type [" + type + "]"));
+                    }
+
+                    typeParameters.add(typeParameter);
+                }
+            }
         } else {
             // we know the method statically, infer return type and any unknown/def types
-            interfaceMethod = expected.struct.getFunctionalMethod();
+            interfaceMethod = scriptScope.getPainlessLookup().lookupFunctionalInterfacePainlessMethod(targetType.getTargetType());
             if (interfaceMethod == null) {
-                throw createError(new IllegalArgumentException("Cannot pass lambda to [" + expected.name +
-                                                               "], not a functional interface"));
+                throw createError(new IllegalArgumentException("Cannot pass lambda to " +
+                        "[" + targetType.getTargetCanonicalTypeName() + "], not a functional interface"));
             }
             // check arity before we manipulate parameters
-            if (interfaceMethod.arguments.size() != paramTypeStrs.size())
-                throw new IllegalArgumentException("Incorrect number of parameters for [" + interfaceMethod.name +
-                                                   "] in [" + expected.clazz + "]");
+            if (interfaceMethod.typeParameters.size() != canonicalTypeNameParameters.size())
+                throw new IllegalArgumentException("Incorrect number of parameters for [" + interfaceMethod.javaMethod.getName() +
+                        "] in [" + targetType.getTargetCanonicalTypeName() + "]");
             // for method invocation, its allowed to ignore the return value
-            if (interfaceMethod.rtn == Definition.VOID_TYPE) {
-                returnType = Definition.DEF_TYPE;
+            if (interfaceMethod.returnType == void.class) {
+                returnType = def.class;
             } else {
-                returnType = interfaceMethod.rtn;
+                returnType = interfaceMethod.returnType;
             }
-            // replace any def types with the actual type (which could still be def)
-            actualParamTypeStrs = new ArrayList<String>();
-            for (int i = 0; i < paramTypeStrs.size(); i++) {
-                String paramType = paramTypeStrs.get(i);
-                if (paramType.equals(Definition.DEF_TYPE.name)) {
-                    actualParamTypeStrs.add(interfaceMethod.arguments.get(i).name);
+            // replace any null types with the actual type
+            typeParameters = new ArrayList<>(canonicalTypeNameParameters.size());
+            for (int i = 0; i < canonicalTypeNameParameters.size(); i++) {
+                String paramType = canonicalTypeNameParameters.get(i);
+                if (paramType == null) {
+                    typeParameters.add(interfaceMethod.typeParameters.get(i));
                 } else {
-                    actualParamTypeStrs.add(paramType);
+                    Class<?> typeParameter = scriptScope.getPainlessLookup().canonicalTypeNameToType(paramType);
+
+                    if (typeParameter == null) {
+                        throw createError(new IllegalArgumentException("cannot resolve type [" + paramType + "]"));
+                    }
+
+                    typeParameters.add(typeParameter);
                 }
             }
         }
-        // gather any variables used by the lambda body first.
-        Set<String> variables = new HashSet<>();
-        for (AStatement statement : statements) {
-            statement.extractVariables(variables);
+
+        LambdaScope lambdaScope = semanticScope.newLambdaScope(returnType);
+
+        for (int index = 0; index < typeParameters.size(); ++index) {
+            Class<?> type = typeParameters.get(index);
+            String paramName = this.parameterNames.get(index);
+            lambdaScope.defineVariable(getLocation(), type, paramName, true);
         }
-        // any of those variables defined in our scope need to be captured
-        captures = new ArrayList<>();
-        for (String variable : variables) {
-            if (locals.hasVariable(variable)) {
-                captures.add(locals.getVariable(location, variable));
-            }
+
+        if (blockNode.getStatementNodes().isEmpty()) {
+            throw createError(new IllegalArgumentException("cannot generate empty lambda"));
         }
+        semanticScope.setCondition(blockNode, LastSource.class);
+        AStatement.Output blockOutput = blockNode.analyze(classNode, lambdaScope);
+
+        if (semanticScope.getCondition(blockNode, MethodEscape.class) == false) {
+            throw createError(new IllegalArgumentException("not all paths return a value for lambda"));
+        }
+
+        maxLoopCounter = scriptScope.getCompilerSettings().getMaxLoopCounter();
+
         // prepend capture list to lambda's arguments
-        List<String> paramTypes = new ArrayList<>();
-        List<String> paramNames = new ArrayList<>();
+        List<Variable> captures = new ArrayList<>(lambdaScope.getCaptures());
+        typeParametersWithCaptures = new ArrayList<>(captures.size() + typeParameters.size());
+        parameterNames = new ArrayList<>(captures.size() + this.parameterNames.size());
         for (Variable var : captures) {
-            paramTypes.add(var.type.name);
-            paramNames.add(var.name);
+            typeParametersWithCaptures.add(var.getType());
+            parameterNames.add(var.getName());
         }
-        paramTypes.addAll(actualParamTypeStrs);
-        paramNames.addAll(paramNameStrs);
+        typeParametersWithCaptures.addAll(typeParameters);
+        parameterNames.addAll(this.parameterNames);
 
         // desugar lambda body into a synthetic method
-        desugared = new SFunction(reserved, location, returnType.name, name,
-                                            paramTypes, paramNames, statements, true);
-        desugared.generateSignature();
-        desugared.analyze(Locals.newLambdaScope(locals.getProgramScope(), returnType, desugared.parameters,
-                                                captures.size(), reserved.getMaxLoopCounter()));
+        name = scriptScope.getNextSyntheticName("lambda");
+        scriptScope.getFunctionTable().addFunction(name, returnType, typeParametersWithCaptures, true, true);
+
+        ReferenceNode referenceNode;
 
         // setup method reference to synthetic method
-        if (expected == null) {
-            ref = null;
-            actual = Definition.getType("String");
-            defPointer = "Sthis." + name + "," + captures.size();
+        if (targetType == null) {
+            valueType = String.class;
+            String defReferenceEncoding = "Sthis." + name + "," + captures.size();
+
+            DefInterfaceReferenceNode defInterfaceReferenceNode = new DefInterfaceReferenceNode();
+            defInterfaceReferenceNode.setDefReferenceEncoding(defReferenceEncoding);
+            referenceNode = defInterfaceReferenceNode;
         } else {
-            defPointer = null;
-            try {
-                ref = new FunctionRef(expected, interfaceMethod, desugared.method, captures.size());
-            } catch (IllegalArgumentException e) {
-                throw createError(e);
-            }
-            actual = expected;
-        }
-    }
+            FunctionRef ref = FunctionRef.create(scriptScope.getPainlessLookup(), scriptScope.getFunctionTable(),
+                    getLocation(), targetType.getTargetType(), "this", name, captures.size());
+            valueType = targetType.getTargetType();
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
-
-        if (ref != null) {
-            writer.writeDebugInfo(location);
-            // load captures
-            for (Variable capture : captures) {
-                writer.visitVarInsn(capture.type.type.getOpcode(Opcodes.ILOAD), capture.getSlot());
-            }
-            // convert MethodTypes to asm Type for the constant pool.
-            String invokedType = ref.invokedType.toMethodDescriptorString();
-            org.objectweb.asm.Type samMethodType =
-                org.objectweb.asm.Type.getMethodType(ref.samMethodType.toMethodDescriptorString());
-            org.objectweb.asm.Type interfaceType =
-                org.objectweb.asm.Type.getMethodType(ref.interfaceMethodType.toMethodDescriptorString());
-            if (ref.needsBridges()) {
-                writer.invokeDynamic(ref.invokedName,
-                                     invokedType,
-                                     LAMBDA_BOOTSTRAP_HANDLE,
-                                     samMethodType,
-                                     ref.implMethodASM,
-                                     samMethodType,
-                                     LambdaMetafactory.FLAG_BRIDGES,
-                                     1,
-                                     interfaceType);
-            } else {
-                writer.invokeDynamic(ref.invokedName,
-                                     invokedType,
-                                     LAMBDA_BOOTSTRAP_HANDLE,
-                                     samMethodType,
-                                     ref.implMethodASM,
-                                     samMethodType,
-                                     0);
-            }
-        } else {
-            // placeholder
-            writer.push((String)null);
-            // load captures
-            for (Variable capture : captures) {
-                writer.visitVarInsn(capture.type.type.getOpcode(Opcodes.ILOAD), capture.getSlot());
-            }
+            TypedInterfaceReferenceNode typedInterfaceReferenceNode = new TypedInterfaceReferenceNode();
+            typedInterfaceReferenceNode.setReference(ref);
+            referenceNode = typedInterfaceReferenceNode;
         }
 
-        // add synthetic method to the queue to be written
-        globals.addSyntheticMethod(desugared);
-    }
+        semanticScope.putDecoration(this, new ValueType(valueType));
 
-    @Override
-    public String getPointer() {
-        return defPointer;
-    }
+        FunctionNode functionNode = new FunctionNode();
+        functionNode.setBlockNode((BlockNode)blockOutput.statementNode);
+        functionNode.setLocation(getLocation());
+        functionNode.setName(name);
+        functionNode.setReturnType(returnType);
+        functionNode.getTypeParameters().addAll(typeParametersWithCaptures);
+        functionNode.getParameterNames().addAll(parameterNames);
+        functionNode.setStatic(true);
+        functionNode.setVarArgs(false);
+        functionNode.setSynthetic(true);
+        functionNode.setMaxLoopCounter(maxLoopCounter);
 
-    @Override
-    public org.objectweb.asm.Type[] getCaptures() {
-        org.objectweb.asm.Type[] types = new org.objectweb.asm.Type[captures.size()];
-        for (int i = 0; i < types.length; i++) {
-            types[i] = captures.get(i).type.type;
+        classNode.addFunctionNode(functionNode);
+
+        referenceNode.setLocation(getLocation());
+        referenceNode.setExpressionType(valueType);
+
+        for (Variable capture : captures) {
+            referenceNode.addCapture(capture.getName());
         }
-        return types;
-    }
 
-    @Override
-    public String toString() {
-        return multilineToString(pairwiseToString(paramTypeStrs, paramNameStrs), statements);
+        output.expressionNode = referenceNode;
+
+        return output;
     }
 }

@@ -19,84 +19,77 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
-import org.objectweb.asm.Label;
-import org.objectweb.asm.Opcodes;
+import org.elasticsearch.painless.ir.BlockNode;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.IfNode;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.symbol.Decorations.AnyBreak;
+import org.elasticsearch.painless.symbol.Decorations.AnyContinue;
+import org.elasticsearch.painless.symbol.Decorations.InLoop;
+import org.elasticsearch.painless.symbol.Decorations.LastLoop;
+import org.elasticsearch.painless.symbol.Decorations.LastSource;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * Represents an if block.
  */
-public final class SIf extends AStatement {
+public class SIf extends AStatement {
 
-    AExpression condition;
-    final SBlock ifblock;
+    private final AExpression conditionNode;
+    private final SBlock ifblockNode;
 
-    public SIf(Location location, AExpression condition, SBlock ifblock) {
-        super(location);
+    public SIf(int identifier, Location location, AExpression conditionNode, SBlock ifblockNode) {
+        super(identifier, location);
 
-        this.condition = Objects.requireNonNull(condition);
-        this.ifblock = ifblock;
+        this.conditionNode = Objects.requireNonNull(conditionNode);
+        this.ifblockNode = ifblockNode;
+    }
+
+    public AExpression getConditionNode() {
+        return conditionNode;
+    }
+
+    public SBlock getIfblockNode() {
+        return ifblockNode;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        condition.extractVariables(variables);
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        Output output = new Output();
 
-        if (ifblock != null) {
-            ifblock.extractVariables(variables);
-        }
-    }
+        semanticScope.setCondition(conditionNode, Read.class);
+        semanticScope.putDecoration(conditionNode, new TargetType(boolean.class));
+        AExpression.Output conditionOutput = AExpression.analyze(conditionNode, classNode, semanticScope);
+        PainlessCast conditionCast = conditionNode.cast(semanticScope);
 
-    @Override
-    void analyze(Locals locals) {
-        condition.expected = Definition.BOOLEAN_TYPE;
-        condition.analyze(locals);
-        condition = condition.cast(locals);
-
-        if (condition.constant != null) {
+        if (conditionNode instanceof EBoolean) {
             throw createError(new IllegalArgumentException("Extraneous if statement."));
         }
 
-        if (ifblock == null) {
+        if (ifblockNode == null) {
             throw createError(new IllegalArgumentException("Extraneous if statement."));
         }
 
-        ifblock.lastSource = lastSource;
-        ifblock.inLoop = inLoop;
-        ifblock.lastLoop = lastLoop;
+        semanticScope.replicateCondition(this, ifblockNode, LastSource.class);
+        semanticScope.replicateCondition(this, ifblockNode, InLoop.class);
+        semanticScope.replicateCondition(this, ifblockNode, LastLoop.class);
+        Output ifblockOutput = ifblockNode.analyze(classNode, semanticScope.newLocalScope());
 
-        ifblock.analyze(Locals.newLocalScope(locals));
+        semanticScope.replicateCondition(ifblockNode, this, AnyContinue.class);
+        semanticScope.replicateCondition(ifblockNode, this, AnyBreak.class);
 
-        anyContinue = ifblock.anyContinue;
-        anyBreak = ifblock.anyBreak;
-        statementCount = ifblock.statementCount;
-    }
+        IfNode ifNode = new IfNode();
+        ifNode.setConditionNode(AExpression.cast(conditionOutput.expressionNode, conditionCast));
+        ifNode.setBlockNode((BlockNode)ifblockOutput.statementNode);
+        ifNode.setLocation(getLocation());
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeStatementOffset(location);
+        output.statementNode = ifNode;
 
-        Label fals = new Label();
-
-        condition.write(writer, globals);
-        writer.ifZCmp(Opcodes.IFEQ, fals);
-
-        ifblock.continu = continu;
-        ifblock.brake = brake;
-        ifblock.write(writer, globals);
-
-        writer.mark(fals);
-    }
-
-    @Override
-    public String toString() {
-        return singleLineToString(condition, ifblock);
+        return output;
     }
 }

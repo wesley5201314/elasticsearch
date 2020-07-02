@@ -59,7 +59,7 @@ final class RestClientTestUtil {
     }
 
     static int randomStatusCode(Random random) {
-        return RandomPicks.randomFrom(random, ALL_ERROR_STATUS_CODES);
+        return RandomPicks.randomFrom(random, ALL_STATUS_CODES);
     }
 
     static int randomOkStatusCode(Random random) {
@@ -100,7 +100,7 @@ final class RestClientTestUtil {
             if (random.nextBoolean()) {
                 headerName = headerName + i;
             }
-            headers[i] = new BasicHeader(headerName, RandomStrings.randomAsciiOfLengthBetween(random, 3, 10));
+            headers[i] = new BasicHeader(headerName, RandomStrings.randomAsciiLettersOfLengthBetween(random, 3, 10));
         }
         return headers;
     }

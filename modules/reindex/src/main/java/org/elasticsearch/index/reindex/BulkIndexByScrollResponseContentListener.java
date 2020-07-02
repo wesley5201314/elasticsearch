@@ -19,7 +19,6 @@
 
 package org.elasticsearch.index.reindex;
 
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.bulk.BulkItemResponse.Failure;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -35,7 +34,7 @@ import java.util.Map;
 /**
  * RestBuilderListener that returns higher than 200 status if there are any failures and allows to set XContent.Params.
  */
-public class BulkIndexByScrollResponseContentListener extends RestBuilderListener<BulkIndexByScrollResponse> {
+public class BulkIndexByScrollResponseContentListener extends RestBuilderListener<BulkByScrollResponse> {
 
     private final Map<String, String> params;
 
@@ -45,14 +44,14 @@ public class BulkIndexByScrollResponseContentListener extends RestBuilderListene
     }
 
     @Override
-    public RestResponse buildResponse(BulkIndexByScrollResponse response, XContentBuilder builder) throws Exception {
+    public RestResponse buildResponse(BulkByScrollResponse response, XContentBuilder builder) throws Exception {
         builder.startObject();
         response.toXContent(builder, new ToXContent.DelegatingMapParams(params, channel.request()));
         builder.endObject();
         return new BytesRestResponse(getStatus(response), builder);
     }
 
-    private RestStatus getStatus(BulkIndexByScrollResponse response) {
+    private RestStatus getStatus(BulkByScrollResponse response) {
         /*
          * Return the highest numbered rest status under the assumption that higher numbered statuses are "more error" and thus more
          * interesting to the user.
@@ -67,7 +66,7 @@ public class BulkIndexByScrollResponseContentListener extends RestBuilderListene
             }
         }
         for (SearchFailure failure: response.getSearchFailures()) {
-            RestStatus failureStatus = ExceptionsHelper.status(failure.getReason());
+            RestStatus failureStatus = failure.getStatus();
             if (failureStatus.getStatus() > status.getStatus()) {
                 status = failureStatus;
             }

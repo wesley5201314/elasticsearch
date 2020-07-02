@@ -1,22 +1,23 @@
 [[query-dsl-geo-distance-query]]
-=== Geo Distance Query
+=== Geo-distance query
+++++
+<titleabbrev>Geo-distance</titleabbrev>
+++++
 
 Filters documents that include only hits that exists within a specific
 distance from a geo point. Assuming the following mapping and indexed
 document:
 
-[source,js]
+[source,console]
 --------------------------------------------------
 PUT /my_locations
 {
     "mappings": {
-        "location": {
-            "properties": {
-                "pin": {
-                    "properties": {
-                        "location": {
-                            "type": "geo_point"
-                        }
+        "properties": {
+            "pin": {
+                "properties": {
+                    "location": {
+                        "type": "geo_point"
                     }
                 }
             }
@@ -24,7 +25,7 @@ PUT /my_locations
     }
 }
 
-PUT /my_locations/location/1
+PUT /my_locations/_doc/1
 {
     "pin" : {
         "location" : {
@@ -34,16 +35,15 @@ PUT /my_locations/location/1
     }
 }
 --------------------------------------------------
-// CONSOLE
 // TESTSETUP
 
 
 Then the following simple query can be executed with a `geo_distance`
 filter:
 
-[source,js]
+[source,console]
 --------------------------------------------------
-GET /my_locations/location/_search
+GET /my_locations/_search
 {
     "query": {
         "bool" : {
@@ -63,7 +63,6 @@ GET /my_locations/location/_search
     }
 }
 --------------------------------------------------
-// CONSOLE
 
 [float]
 ==== Accepted Formats
@@ -74,9 +73,9 @@ representations of the geo point, the filter can accept it as well:
 [float]
 ===== Lat Lon As Properties
 
-[source,js]
+[source,console]
 --------------------------------------------------
-GET /my_locations/location/_search
+GET /my_locations/_search
 {
     "query": {
         "bool" : {
@@ -96,7 +95,6 @@ GET /my_locations/location/_search
     }
 }
 --------------------------------------------------
-// CONSOLE
 
 [float]
 ===== Lat Lon As Array
@@ -104,9 +102,9 @@ GET /my_locations/location/_search
 Format in `[lon, lat]`, note, the order of lon/lat here in order to
 conform with http://geojson.org/[GeoJSON].
 
-[source,js]
+[source,console]
 --------------------------------------------------
-GET /my_locations/location/_search
+GET /my_locations/_search
 {
     "query": {
         "bool" : {
@@ -123,7 +121,6 @@ GET /my_locations/location/_search
     }
 }
 --------------------------------------------------
-// CONSOLE
 
 
 [float]
@@ -131,9 +128,9 @@ GET /my_locations/location/_search
 
 Format in `lat,lon`.
 
-[source,js]
+[source,console]
 --------------------------------------------------
-GET /my_locations/location/_search
+GET /my_locations/_search
 {
     "query": {
         "bool" : {
@@ -150,14 +147,13 @@ GET /my_locations/location/_search
     }
 }
 --------------------------------------------------
-// CONSOLE
 
 [float]
 ===== Geohash
 
-[source,js]
+[source,console]
 --------------------------------------------------
-GET /my_locations/location/_search
+GET /my_locations/_search
 {
     "query": {
         "bool" : {
@@ -174,7 +170,6 @@ GET /my_locations/location/_search
     }
 }
 --------------------------------------------------
-// CONSOLE
 
 [float]
 ==== Options
@@ -191,24 +186,11 @@ The following are options allowed on the filter:
 
 `distance_type`::
 
-    How to compute the distance. Can either be `sloppy_arc` (default), `arc` (slightly more precise but significantly slower) or `plane` (faster, but inaccurate on long distances and close to the poles).
-
-`optimize_bbox`::
-
-    Whether to use the optimization of first running a bounding box check
-    before the distance check. Defaults to `memory` which will do in memory
-    checks. Can also have values of `indexed` to use indexed value check (make
-    sure the `geo_point` type index lat lon in this case), or `none` which
-    disables bounding box optimization. deprecated[2.2]
+    How to compute the distance. Can either be `arc` (default), or `plane` (faster, but inaccurate on long distances and close to the poles).
 
 `_name`::
 
     Optional name field to identify the query
-
-`ignore_malformed`::
-   
-    deprecated[5.0.0,Use `validation_method` instead] Set to `true` to accept geo points with invalid latitude or
-    longitude (default is `false`).
 
 `validation_method`::
 

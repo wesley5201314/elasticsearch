@@ -19,55 +19,53 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.DeclarationBlockNode;
+import org.elasticsearch.painless.ir.DeclarationNode;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
-
-import static java.util.Collections.emptyList;
 
 /**
  * Represents a series of declarations.
  */
-public final class SDeclBlock extends AStatement {
+public class SDeclBlock extends AStatement {
 
-    private final List<SDeclaration> declarations;
+    private final List<SDeclaration> declarationNodes;
 
-    public SDeclBlock(Location location, List<SDeclaration> declarations) {
-        super(location);
+    public SDeclBlock(int identifier, Location location, List<SDeclaration> declarationNodes) {
+        super(identifier, location);
 
-        this.declarations = Collections.unmodifiableList(declarations);
+        this.declarationNodes = Collections.unmodifiableList(declarationNodes);
+    }
+
+    public List<SDeclaration> getDeclarationNodes() {
+        return declarationNodes;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        for (SDeclaration declaration : declarations) {
-            declaration.extractVariables(variables);
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        Output output = new Output();
+
+        List<Output> declarationOutputs = new ArrayList<>(declarationNodes.size());
+
+        for (SDeclaration declaration : declarationNodes) {
+            declarationOutputs.add(declaration.analyze(classNode, semanticScope));
         }
-    }
 
-    @Override
-    void analyze(Locals locals) {
-        for (SDeclaration declaration : declarations) {
-            declaration.analyze(locals);
+        DeclarationBlockNode declarationBlockNode = new DeclarationBlockNode();
+
+        for (Output declarationOutput : declarationOutputs) {
+            declarationBlockNode.addDeclarationNode((DeclarationNode)declarationOutput.statementNode);
         }
 
-        statementCount = declarations.size();
-    }
+        declarationBlockNode.setLocation(getLocation());
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        for (AStatement declaration : declarations) {
-            declaration.write(writer, globals);
-        }
-    }
+        output.statementNode = declarationBlockNode;
 
-    @Override
-    public String toString() {
-        return multilineToString(emptyList(), declarations);
+        return output;
     }
 }

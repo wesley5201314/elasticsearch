@@ -1,5 +1,8 @@
 [[analysis-standard-tokenizer]]
-=== Standard Tokenizer
+=== Standard tokenizer
+++++
+<titleabbrev>Standard</titleabbrev>
+++++
 
 The `standard` tokenizer provides grammar based tokenization (based on the
 Unicode Text Segmentation algorithm, as specified in
@@ -9,7 +12,7 @@ for most languages.
 [float]
 === Example output
 
-[source,js]
+[source,console]
 ---------------------------
 POST _analyze
 {
@@ -17,11 +20,10 @@ POST _analyze
   "text": "The 2 QUICK Brown-Foxes jumped over the lazy dog's bone."
 }
 ---------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -105,7 +107,6 @@ POST _analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 
@@ -134,7 +135,7 @@ The `standard` tokenizer accepts the following parameters:
 In this example, we configure the `standard` tokenizer to have a
 `max_token_length` of 5 (for demonstration purposes):
 
-[source,js]
+[source,console]
 ----------------------------
 PUT my_index
 {
@@ -161,11 +162,10 @@ POST my_index/_analyze
   "text": "The 2 QUICK Brown-Foxes jumped over the lazy dog's bone."
 }
 ----------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -256,7 +256,6 @@ POST my_index/_analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 

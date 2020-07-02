@@ -32,6 +32,7 @@ import static org.hamcrest.Matchers.both;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.either;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 /**
@@ -44,7 +45,7 @@ public class ReindexFailureTests extends ReindexTestCase {
          * conflict on every request.
          */
         indexRandom(true,
-                client().prepareIndex("dest", "test", "test").setSource("test", 10) /* Its a string in the source! */);
+                client().prepareIndex("dest").setId("test").setSource("test", 10) /* Its a string in the source! */);
 
         indexDocs(100);
 
@@ -56,19 +57,20 @@ public class ReindexFailureTests extends ReindexTestCase {
          */
         copy.source().setSize(1);
 
-        BulkIndexByScrollResponse response = copy.get();
+        BulkByScrollResponse response = copy.get();
         assertThat(response, matcher()
                 .batches(1)
                 .failures(both(greaterThan(0)).and(lessThanOrEqualTo(maximumNumberOfShards()))));
         for (Failure failure: response.getBulkFailures()) {
-            assertThat(failure.getMessage(), containsString("NumberFormatException[For input string: \"words words\"]"));
+            assertThat(failure.getCause().getCause(), instanceOf(IllegalArgumentException.class));
+            assertThat(failure.getCause().getCause().getMessage(), containsString("For input string: \"words words\""));
         }
     }
 
     public void testAbortOnVersionConflict() throws Exception {
         // Just put something in the way of the copy.
         indexRandom(true,
-                client().prepareIndex("dest", "test", "1").setSource("test", "test"));
+                client().prepareIndex("dest").setId("1").setSource("test", "test"));
 
         indexDocs(100);
 
@@ -76,10 +78,10 @@ public class ReindexFailureTests extends ReindexTestCase {
         // CREATE will cause the conflict to prevent the write.
         copy.destination().setOpType(CREATE);
 
-        BulkIndexByScrollResponse response = copy.get();
+        BulkByScrollResponse response = copy.get();
         assertThat(response, matcher().batches(1).versionConflicts(1).failures(1).created(99));
         for (Failure failure: response.getBulkFailures()) {
-            assertThat(failure.getMessage(), containsString("VersionConflictEngineException[[test]["));
+            assertThat(failure.getMessage(), containsString("VersionConflictEngineException: ["));
         }
     }
 
@@ -98,20 +100,29 @@ public class ReindexFailureTests extends ReindexTestCase {
             indexDocs(100);
             ReindexRequestBuilder copy = reindex().source("source").destination("dest");
             copy.source().setSize(10);
-            Future<BulkIndexByScrollResponse> response = copy.execute();
+            Future<BulkByScrollResponse> response = copy.execute();
             client().admin().indices().prepareDelete("source").get();
 
             try {
                 response.get();
                 logger.info("Didn't trigger a reindex failure on the {} attempt", attempt);
                 attempt++;
+                /*
+                 * In the past we've seen the delete of the source index
+                 * actually take effect *during* the `indexDocs` call in
+                 * the next step. This breaks things pretty disasterously
+                 * so we *try* and wait for the delete to be fully
+                 * complete here.
+                 */
+                assertBusy(() -> assertFalse(indexExists("source")));
             } catch (ExecutionException e) {
-                logger.info("Triggered a reindex failure on the {} attempt", attempt);
+                logger.info("Triggered a reindex failure on the {} attempt: {}", attempt, e.getMessage());
                 assertThat(e.getMessage(),
                         either(containsString("all shards failed"))
                         .or(containsString("No search context found"))
-                        .or(containsString("no such index"))
-                        );
+                        .or(containsString("no such index [source]"))
+                        .or(containsString("Partial shards failure"))
+                );
                 return;
             }
         }
@@ -119,9 +130,9 @@ public class ReindexFailureTests extends ReindexTestCase {
     }
 
     private void indexDocs(int count) throws Exception {
-        List<IndexRequestBuilder> docs = new ArrayList<IndexRequestBuilder>(count);
+        List<IndexRequestBuilder> docs = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            docs.add(client().prepareIndex("source", "test", Integer.toString(i)).setSource("test", "words words"));
+            docs.add(client().prepareIndex("source").setId(Integer.toString(i)).setSource("test", "words words"));
         }
         indexRandom(true, docs);
     }

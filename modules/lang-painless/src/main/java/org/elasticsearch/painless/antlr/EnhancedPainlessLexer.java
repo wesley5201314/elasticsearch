@@ -20,55 +20,35 @@
 package org.elasticsearch.painless.antlr;
 
 import org.antlr.v4.runtime.CharStream;
-import org.antlr.v4.runtime.Lexer;
 import org.antlr.v4.runtime.LexerNoViableAltException;
 import org.antlr.v4.runtime.Token;
-import org.antlr.v4.runtime.TokenSource;
 import org.antlr.v4.runtime.misc.Interval;
-import org.antlr.v4.runtime.misc.Pair;
 import org.elasticsearch.painless.Location;
 
 /**
  * A lexer that is customized for painless. It:
  * <ul>
- * <li>Overrides the default error behavior to fail on the first error
- * <li>Stores the last token in case we need to do lookbehind for semicolon insertion and regex vs division detection
+ * <li>Overrides the default error behavior to fail on the first error.
+ * <li>Stores the last token in case we need to do lookbehind for semicolon insertion and regex vs division detection.
+ * <li>Implements the regex vs division detection.
  * <li>Insert semicolons where they'd improve the language's readability. Rather than hack this into the parser and create a ton of
  * ambiguity we hack them here where we can use heuristics to do it quickly.
  * <li>Enhances the error message when a string contains invalid escape sequences to include a list of valid escape sequences.
  * </ul>
  */
 final class EnhancedPainlessLexer extends PainlessLexer {
-    final String sourceName;
-    private Token stashedNext = null;
-    private Token previous = null;
+    private final String sourceName;
+    private Token current = null;
 
     EnhancedPainlessLexer(CharStream charStream, String sourceName) {
         super(charStream);
         this.sourceName = sourceName;
     }
 
-    public Token getPreviousToken() {
-        return previous;
-    }
-
     @Override
     public Token nextToken() {
-        if (stashedNext != null) {
-            previous = stashedNext;
-            stashedNext = null;
-            return previous;
-        }
-        Token next = super.nextToken();
-        if (insertSemicolon(previous, next)) {
-            stashedNext = next;
-            previous = _factory.create(new Pair<TokenSource, CharStream>(this, _input), PainlessLexer.SEMICOLON, ";",
-                    Lexer.DEFAULT_TOKEN_CHANNEL, next.getStartIndex(), next.getStopIndex(), next.getLine(), next.getCharPositionInLine());
-            return previous;
-        } else {
-            previous = next;
-            return next;
-        }
+        current = super.nextToken();
+        return current;
     }
 
     @Override
@@ -89,14 +69,22 @@ final class EnhancedPainlessLexer extends PainlessLexer {
         throw location.createError(new IllegalArgumentException(message, lnvae));
     }
 
-    private static boolean insertSemicolon(Token previous, Token next) {
-        if (previous == null || next.getType() != PainlessLexer.RBRACK) {
-            return false;
+    @Override
+    protected boolean isSlashRegex() {
+        Token lastToken = current;
+        if (lastToken == null) {
+            return true;
         }
-        switch (previous.getType()) {
-        case PainlessLexer.RBRACK:     // };} would be weird!
-        case PainlessLexer.SEMICOLON:  // already have a semicolon, no need to add one
-        case PainlessLexer.LBRACK:     // empty blocks don't need a semicolon
+        switch (lastToken.getType()) {
+        case PainlessLexer.RBRACE:
+        case PainlessLexer.RP:
+        case PainlessLexer.OCTAL:
+        case PainlessLexer.HEX:
+        case PainlessLexer.INTEGER:
+        case PainlessLexer.DECIMAL:
+        case PainlessLexer.ID:
+        case PainlessLexer.DOTINTEGER:
+        case PainlessLexer.DOTID:
             return false;
         default:
             return true;

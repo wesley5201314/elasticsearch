@@ -19,8 +19,11 @@
 
 package org.elasticsearch.painless;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+
+import static org.hamcrest.Matchers.containsString;
 
 public class LambdaTests extends ScriptTestCase {
 
@@ -65,8 +68,8 @@ public class LambdaTests extends ScriptTestCase {
     }
 
     public void testPrimitiveLambdasConvertible() {
-        assertEquals(2, exec("List l = new ArrayList(); l.add(1); l.add(1); "
-                           + "return l.stream().mapToInt(byte x -> x).sum();"));
+        assertEquals(2, exec("List l = new ArrayList(); l.add((short)1); l.add(1); "
+                           + "return l.stream().mapToInt(long x -> (int)1).sum();"));
     }
 
     public void testPrimitiveArgs() {
@@ -109,7 +112,7 @@ public class LambdaTests extends ScriptTestCase {
 
     public void testTwoLambdas() {
         assertEquals("testingcdefg", exec(
-                "org.elasticsearch.painless.FeatureTest test = new org.elasticsearch.painless.FeatureTest(2,3);" +
+                "org.elasticsearch.painless.FeatureTestObject test = new org.elasticsearch.painless.FeatureTestObject(2,3);" +
                 "return test.twoFunctionsOfX(x -> 'testing'.concat(x), y -> 'abcdefg'.substring(y))"));
     }
 
@@ -141,12 +144,6 @@ public class LambdaTests extends ScriptTestCase {
         assertTrue(expected.getMessage().contains("is read-only"));
     }
 
-    @AwaitsFix(bugUrl = "def type tracking")
-    public void testOnlyCapturesAreReadOnly() {
-        assertEquals(4, exec("List l = new ArrayList(); l.add(1); l.add(1); "
-                           + "return l.stream().mapToInt(x -> { x += 1; return x }).sum();"));
-    }
-
     /** Lambda parameters shouldn't be able to mask a variable already in scope */
     public void testNoParamMasking() {
         IllegalArgumentException expected = expectScriptThrows(IllegalArgumentException.class, () -> {
@@ -171,7 +168,7 @@ public class LambdaTests extends ScriptTestCase {
     }
 
     public void testWrongArity() {
-        IllegalArgumentException expected = expectScriptThrows(IllegalArgumentException.class, () -> {
+        IllegalArgumentException expected = expectScriptThrows(IllegalArgumentException.class, false, () -> {
             exec("Optional.empty().orElseGet(x -> x);");
         });
         assertTrue(expected.getMessage().contains("Incorrect number of parameters"));
@@ -181,11 +178,11 @@ public class LambdaTests extends ScriptTestCase {
         IllegalArgumentException expected = expectScriptThrows(IllegalArgumentException.class, () -> {
             exec("def y = Optional.empty(); return y.orElseGet(x -> x);");
         });
-        assertTrue(expected.getMessage(), expected.getMessage().contains("Incorrect number of parameters"));
+        assertTrue(expected.getMessage(), expected.getMessage().contains("due to an incorrect number of arguments"));
     }
 
     public void testWrongArityNotEnough() {
-        IllegalArgumentException expected = expectScriptThrows(IllegalArgumentException.class, () -> {
+        IllegalArgumentException expected = expectScriptThrows(IllegalArgumentException.class, false, () -> {
             exec("List l = new ArrayList(); l.add(1); l.add(1); "
                + "return l.stream().mapToInt(() -> 5).sum();");
         });
@@ -197,7 +194,7 @@ public class LambdaTests extends ScriptTestCase {
             exec("def l = new ArrayList(); l.add(1); l.add(1); "
                + "return l.stream().mapToInt(() -> 5).sum();");
         });
-        assertTrue(expected.getMessage().contains("Incorrect number of parameters"));
+        assertTrue(expected.getMessage(), expected.getMessage().contains("due to an incorrect number of arguments"));
     }
 
     public void testLambdaInFunction() {
@@ -230,5 +227,26 @@ public class LambdaTests extends ScriptTestCase {
             "else { return params['key'] } }, 'value')", params, true));
         assertEquals(false, exec(compare + "compare(() -> { if (params['number'] == 1) { return params['number'] }" +
             "else { return params['key'] } }, 2)", params, true));
+    }
+
+    public void testReturnVoid() {
+        Throwable expected = expectScriptThrows(ClassCastException.class, () -> {
+            exec("StringBuilder b = new StringBuilder(); List l = [1, 2]; l.stream().mapToLong(i -> b.setLength(i))");
+        });
+        assertThat(expected.getMessage(), containsString("Cannot cast from [void] to [long]."));
+    }
+
+    public void testReturnVoidDef() {
+        // If we can catch the error at compile time we do
+        Exception expected = expectScriptThrows(ClassCastException.class, () -> {
+            exec("StringBuilder b = new StringBuilder(); def l = [1, 2]; l.stream().mapToLong(i -> b.setLength(i))");
+        });
+        assertThat(expected.getMessage(), containsString("Cannot cast from [void] to [def]."));
+
+        // Otherwise we convert the void into a null
+        assertEquals(Arrays.asList(null, null),
+                exec("def b = new StringBuilder(); def l = [1, 2]; l.stream().map(i -> b.setLength(i)).collect(Collectors.toList())"));
+        assertEquals(Arrays.asList(null, null),
+                exec("def b = new StringBuilder(); List l = [1, 2]; l.stream().map(i -> b.setLength(i)).collect(Collectors.toList())"));
     }
 }

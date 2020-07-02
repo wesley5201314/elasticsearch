@@ -19,115 +19,93 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
-import org.objectweb.asm.Label;
-import org.objectweb.asm.Opcodes;
+import org.elasticsearch.painless.ir.BlockNode;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.DoWhileLoopNode;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.symbol.Decorations.AllEscape;
+import org.elasticsearch.painless.symbol.Decorations.AnyBreak;
+import org.elasticsearch.painless.symbol.Decorations.AnyContinue;
+import org.elasticsearch.painless.symbol.Decorations.BeginLoop;
+import org.elasticsearch.painless.symbol.Decorations.InLoop;
+import org.elasticsearch.painless.symbol.Decorations.LoopEscape;
+import org.elasticsearch.painless.symbol.Decorations.MethodEscape;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * Represents a do-while loop.
  */
-public final class SDo extends AStatement {
+public class SDo extends AStatement {
 
-    private final SBlock block;
-    private AExpression condition;
+    private final AExpression conditionNode;
+    private final SBlock blockNode;
 
-    private boolean continuous = false;
+    public SDo(int identifier, Location location, AExpression conditionNode, SBlock blockNode) {
+        super(identifier, location);
 
-    public SDo(Location location, SBlock block, AExpression condition) {
-        super(location);
+        this.conditionNode = Objects.requireNonNull(conditionNode);
+        this.blockNode = blockNode;
+    }
 
-        this.condition = Objects.requireNonNull(condition);
-        this.block = block;
+    public AExpression getConditionNode() {
+        return conditionNode;
+    }
+
+    public SBlock getBlockNode() {
+        return blockNode;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        condition.extractVariables(variables);
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        Output output = new Output();
+        semanticScope = semanticScope.newLocalScope();
 
-        if (block != null) {
-            block.extractVariables(variables);
-        }
-    }
-
-    @Override
-    void analyze(Locals locals) {
-        locals = Locals.newLocalScope(locals);
-
-        if (block == null) {
+        if (blockNode == null) {
             throw createError(new IllegalArgumentException("Extraneous do while loop."));
         }
 
-        block.beginLoop = true;
-        block.inLoop = true;
+        semanticScope.setCondition(blockNode, BeginLoop.class);
+        semanticScope.setCondition(blockNode, InLoop.class);
+        Output blockOutput = blockNode.analyze(classNode, semanticScope);
 
-        block.analyze(locals);
-
-        if (block.loopEscape && !block.anyContinue) {
+        if (semanticScope.getCondition(blockNode, LoopEscape.class) &&
+                semanticScope.getCondition(blockNode, AnyContinue.class) == false) {
             throw createError(new IllegalArgumentException("Extraneous do while loop."));
         }
 
-        condition.expected = Definition.BOOLEAN_TYPE;
-        condition.analyze(locals);
-        condition = condition.cast(locals);
+        semanticScope.setCondition(conditionNode, Read.class);
+        semanticScope.putDecoration(conditionNode, new TargetType(boolean.class));
+        AExpression.Output conditionOutput = AExpression.analyze(conditionNode, classNode, semanticScope);
+        PainlessCast conditionCast = conditionNode.cast(semanticScope);
 
-        if (condition.constant != null) {
-            continuous = (boolean)condition.constant;
+        boolean continuous = false;
+
+        if (conditionNode instanceof EBoolean) {
+            continuous = ((EBoolean)conditionNode).getBool();
 
             if (!continuous) {
                 throw createError(new IllegalArgumentException("Extraneous do while loop."));
             }
 
-            if (!block.anyBreak) {
-                methodEscape = true;
-                allEscape = true;
+            if (semanticScope.getCondition(blockNode, AnyBreak.class) == false) {
+                semanticScope.setCondition(this, MethodEscape.class);
+                semanticScope.setCondition(this, AllEscape.class);
             }
         }
 
-        statementCount = 1;
+        DoWhileLoopNode doWhileLoopNode = new DoWhileLoopNode();
+        doWhileLoopNode.setConditionNode(AExpression.cast(conditionOutput.expressionNode, conditionCast));
+        doWhileLoopNode.setBlockNode((BlockNode)blockOutput.statementNode);
+        doWhileLoopNode.setLocation(getLocation());
+        doWhileLoopNode.setContinuous(continuous);
 
-        if (locals.hasVariable(Locals.LOOP)) {
-            loopCounter = locals.getVariable(location, Locals.LOOP);
-        }
-    }
+        output.statementNode = doWhileLoopNode;
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeStatementOffset(location);
-
-        Label start = new Label();
-        Label begin = new Label();
-        Label end = new Label();
-
-        writer.mark(start);
-
-        block.continu = begin;
-        block.brake = end;
-        block.write(writer, globals);
-
-        writer.mark(begin);
-
-        if (!continuous) {
-            condition.write(writer, globals);
-            writer.ifZCmp(Opcodes.IFEQ, end);
-        }
-
-        if (loopCounter != null) {
-            writer.writeLoopCounter(loopCounter.getSlot(), Math.max(1, block.statementCount), location);
-        }
-
-        writer.goTo(start);
-        writer.mark(end);
-    }
-
-    @Override
-    public String toString() {
-        return singleLineToString(condition, block);
+        return output;
     }
 }

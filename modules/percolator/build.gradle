@@ -18,10 +18,29 @@
  */
 
 esplugin {
-    description 'Percolator module adds capability to index queries and query these queries by specifying documents'
-    classname 'org.elasticsearch.percolator.PercolatorPlugin'
-    hasClientJar = true
+  description 'Percolator module adds capability to index queries and query these queries by specifying documents'
+  classname 'org.elasticsearch.percolator.PercolatorPlugin'
 }
 
-compileJava.options.compilerArgs << "-Xlint:-deprecation,-rawtypes"
-compileTestJava.options.compilerArgs << "-Xlint:-deprecation,-rawtypes"
+dependencies {
+  testImplementation project(':modules:parent-join')
+  testImplementation project(':modules:geo')
+}
+
+tasks.named('integTestRunner').configure {
+  exclude '**/PercolatorQuerySearchIT.class'
+}
+
+tasks.register('internalClusterTest', Test) {
+  include '**/PercolatorQuerySearchIT.class'
+}
+
+tasks.named('check').configure {
+  dependsOn 'internalClusterTest'
+}
+
+restResources {
+  restApi {
+    includeCore '_common', 'indices', 'index', 'search', 'msearch'
+  }
+}

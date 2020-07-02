@@ -19,49 +19,44 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
-
-import java.util.Set;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.ContinueNode;
+import org.elasticsearch.painless.symbol.Decorations.AllEscape;
+import org.elasticsearch.painless.symbol.Decorations.AnyContinue;
+import org.elasticsearch.painless.symbol.Decorations.InLoop;
+import org.elasticsearch.painless.symbol.Decorations.LastLoop;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
 /**
  * Represents a continue statement.
  */
-public final class SContinue extends AStatement {
+public class SContinue extends AStatement {
 
-    public SContinue(Location location) {
-        super(location);
+    public SContinue(int identifier, Location location) {
+        super(identifier, location);
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        // Do nothing.
-    }
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        Output output = new Output();
 
-    @Override
-    void analyze(Locals locals) {
-        if (!inLoop) {
+        if (semanticScope.getCondition(this, InLoop.class) == false) {
             throw createError(new IllegalArgumentException("Continue statement outside of a loop."));
         }
 
-        if (lastLoop) {
+        if (semanticScope.getCondition(this, LastLoop.class)) {
             throw createError(new IllegalArgumentException("Extraneous continue statement."));
         }
 
-        allEscape = true;
-        anyContinue = true;
-        statementCount = 1;
-    }
+        semanticScope.setCondition(this, AllEscape.class);
+        semanticScope.setCondition(this, AnyContinue.class);
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.goTo(continu);
-    }
+        ContinueNode continueNode = new ContinueNode();
+        continueNode.setLocation(getLocation());
 
-    @Override
-    public String toString() {
-        return singleLineToString();
+        output.statementNode = continueNode;
+
+        return output;
     }
 }

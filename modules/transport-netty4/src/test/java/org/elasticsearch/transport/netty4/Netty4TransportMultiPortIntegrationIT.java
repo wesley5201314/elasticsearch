@@ -19,24 +19,17 @@
 package org.elasticsearch.transport.netty4;
 
 import org.elasticsearch.ESNetty4IntegTestCase;
-import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.node.info.NodeInfo;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
-import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.common.network.NetworkAddress;
-import org.elasticsearch.common.network.NetworkModule;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
-import org.elasticsearch.env.Environment;
 import org.elasticsearch.test.ESIntegTestCase.ClusterScope;
 import org.elasticsearch.test.ESIntegTestCase.Scope;
 import org.elasticsearch.test.junit.annotations.Network;
-import org.elasticsearch.transport.MockTransportClient;
-import org.elasticsearch.transport.Netty4Plugin;
+import org.elasticsearch.transport.TransportInfo;
 
-import java.net.InetAddress;
 import java.util.Locale;
 
 import static org.hamcrest.Matchers.allOf;
@@ -57,7 +50,7 @@ public class Netty4TransportMultiPortIntegrationIT extends ESNetty4IntegTestCase
     protected Settings nodeSettings(int nodeOrdinal) {
         if (randomPort == -1) {
             randomPort = randomIntBetween(49152, 65525);
-            randomPortRange = String.format(Locale.ROOT, "%s-%s", randomPort, randomPort+10);
+            randomPortRange = String.format(Locale.ROOT, "%s-%s", randomPort, randomPort + 10);
         }
         Settings.Builder builder = Settings.builder()
             .put(super.nodeSettings(nodeOrdinal))
@@ -65,30 +58,17 @@ public class Netty4TransportMultiPortIntegrationIT extends ESNetty4IntegTestCase
             .put("transport.profiles.client1.port", randomPortRange)
             .put("transport.profiles.client1.publish_host", "127.0.0.7")
             .put("transport.profiles.client1.publish_port", "4321")
-            .put("transport.profiles.client1.reuse_address", true);
+            .put("transport.profiles.client1.tcp.reuse_address", true);
         return builder.build();
-    }
-
-    public void testThatTransportClientCanConnect() throws Exception {
-        Settings settings = Settings.builder()
-            .put("cluster.name", internalCluster().getClusterName())
-            .put(NetworkModule.TRANSPORT_TYPE_KEY, Netty4Plugin.NETTY_TRANSPORT_NAME)
-            .put(Environment.PATH_HOME_SETTING.getKey(), createTempDir().toString())
-            .build();
-        try (TransportClient transportClient = new MockTransportClient(settings, Netty4Plugin.class)) {
-            transportClient.addTransportAddress(new TransportAddress(InetAddress.getByName("127.0.0.1"), randomPort));
-            ClusterHealthResponse response = transportClient.admin().cluster().prepareHealth().get();
-            assertThat(response.getStatus(), is(ClusterHealthStatus.GREEN));
-        }
     }
 
     @Network
     public void testThatInfosAreExposed() throws Exception {
         NodesInfoResponse response = client().admin().cluster().prepareNodesInfo().clear().setTransport(true).get();
         for (NodeInfo nodeInfo : response.getNodes()) {
-            assertThat(nodeInfo.getTransport().getProfileAddresses().keySet(), hasSize(1));
-            assertThat(nodeInfo.getTransport().getProfileAddresses(), hasKey("client1"));
-            BoundTransportAddress boundTransportAddress = nodeInfo.getTransport().getProfileAddresses().get("client1");
+            assertThat(nodeInfo.getInfo(TransportInfo.class).getProfileAddresses().keySet(), hasSize(1));
+            assertThat(nodeInfo.getInfo(TransportInfo.class).getProfileAddresses(), hasKey("client1"));
+            BoundTransportAddress boundTransportAddress = nodeInfo.getInfo(TransportInfo.class).getProfileAddresses().get("client1");
             for (TransportAddress transportAddress : boundTransportAddress.boundAddresses()) {
                 assertThat(transportAddress, instanceOf(TransportAddress.class));
             }

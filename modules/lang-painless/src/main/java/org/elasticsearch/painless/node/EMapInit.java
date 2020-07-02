@@ -19,114 +19,122 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
-import org.elasticsearch.painless.Definition.MethodKey;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.MapInitializationNode;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.lookup.PainlessConstructor;
+import org.elasticsearch.painless.lookup.PainlessMethod;
+import org.elasticsearch.painless.lookup.def;
+import org.elasticsearch.painless.symbol.Decorations.Internal;
+import org.elasticsearch.painless.symbol.Decorations.Read;
+import org.elasticsearch.painless.symbol.Decorations.TargetType;
+import org.elasticsearch.painless.symbol.Decorations.ValueType;
+import org.elasticsearch.painless.symbol.Decorations.Write;
+import org.elasticsearch.painless.symbol.SemanticScope;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Objects;
+
+import static org.elasticsearch.painless.lookup.PainlessLookupUtility.typeToCanonicalTypeName;
 
 /**
  * Represents a map initialization shortcut.
  */
-public final class EMapInit extends AExpression {
-    private final List<AExpression> keys;
-    private final List<AExpression> values;
+public class EMapInit extends AExpression {
 
-    private Method constructor = null;
-    private Method method = null;
+    private final List<AExpression> keyNodes;
+    private final List<AExpression> valueNodes;
 
-    public EMapInit(Location location, List<AExpression> keys, List<AExpression> values) {
-        super(location);
+    public EMapInit(int identifier, Location location, List<AExpression> keyNodes, List<AExpression> valueNodes) {
+        super(identifier, location);
 
-        this.keys = keys;
-        this.values = values;
+        this.keyNodes = Collections.unmodifiableList(Objects.requireNonNull(keyNodes));
+        this.valueNodes = Collections.unmodifiableList(Objects.requireNonNull(valueNodes));
+    }
+
+    public List<AExpression> getKeyNodes() {
+        return keyNodes;
+    }
+
+    public List<AExpression> getValueNodes() {
+        return valueNodes;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        for (AExpression key : keys) {
-            key.extractVariables(variables);
+    Output analyze(ClassNode classNode, SemanticScope semanticScope) {
+        if (semanticScope.getCondition(this, Write.class)) {
+            throw createError(new IllegalArgumentException("invalid assignment: cannot assign a value to map initializer"));
         }
 
-        for (AExpression value : values) {
-            value.extractVariables(variables);
-        }
-    }
-
-    @Override
-    void analyze(Locals locals) {
-        if (!read) {
-            throw createError(new IllegalArgumentException("Must read from map initializer."));
+        if (semanticScope.getCondition(this, Read.class) == false) {
+            throw createError(new IllegalArgumentException("not a statement: result not used from map initializer"));
         }
 
-        try {
-            actual = Definition.getType("HashMap");
-        } catch (IllegalArgumentException exception) {
-            throw createError(new IllegalStateException("Illegal tree structure."));
-        }
+        Output output = new Output();
+        Class<?> valueType = HashMap.class;
 
-        constructor = actual.struct.constructors.get(new MethodKey("<init>", 0));
+        PainlessConstructor constructor = semanticScope.getScriptScope().getPainlessLookup().lookupPainlessConstructor(valueType, 0);
 
         if (constructor == null) {
-            throw createError(new IllegalStateException("Illegal tree structure."));
+            throw createError(new IllegalArgumentException(
+                    "constructor [" + typeToCanonicalTypeName(valueType) + ", <init>/0] not found"));
         }
 
-        method = actual.struct.methods.get(new MethodKey("put", 2));
+        PainlessMethod method = semanticScope.getScriptScope().getPainlessLookup().lookupPainlessMethod(valueType, false, "put", 2);
 
         if (method == null) {
+            throw createError(new IllegalArgumentException("method [" + typeToCanonicalTypeName(valueType) + ", put/2] not found"));
+        }
+
+        if (keyNodes.size() != valueNodes.size()) {
             throw createError(new IllegalStateException("Illegal tree structure."));
         }
 
-        if (keys.size() != values.size()) {
-            throw createError(new IllegalStateException("Illegal tree structure."));
+        List<Output> keyOutputs = new ArrayList<>(keyNodes.size());
+        List<PainlessCast> keyCasts = new ArrayList<>(keyNodes.size());
+        List<Output> valueOutputs = new ArrayList<>(valueNodes.size());
+        List<PainlessCast> valueCasts = new ArrayList<>(valueNodes.size());
+
+        for (int i = 0; i < keyNodes.size(); ++i) {
+            AExpression expression = keyNodes.get(i);
+            semanticScope.setCondition(expression, Read.class);
+            semanticScope.putDecoration(expression, new TargetType(def.class));
+            semanticScope.setCondition(expression, Internal.class);
+            Output expressionOutput = analyze(expression, classNode, semanticScope);
+            keyOutputs.add(expressionOutput);
+            keyCasts.add(expression.cast(semanticScope));
+
+            expression = valueNodes.get(i);
+            semanticScope.setCondition(expression, Read.class);
+            semanticScope.putDecoration(expression, new TargetType(def.class));
+            semanticScope.setCondition(expression, Internal.class);
+            expressionOutput = analyze(expression, classNode, semanticScope);
+            valueCasts.add(expression.cast(semanticScope));
+
+            valueOutputs.add(expressionOutput);
         }
 
-        for (int index = 0; index < keys.size(); ++index) {
-            AExpression expression = keys.get(index);
+        semanticScope.putDecoration(this, new ValueType(valueType));
 
-            expression.expected = Definition.DEF_TYPE;
-            expression.internal = true;
-            expression.analyze(locals);
-            keys.set(index, expression.cast(locals));
+        MapInitializationNode mapInitializationNode = new MapInitializationNode();
+
+        for (int i = 0; i < keyNodes.size(); ++i) {
+            mapInitializationNode.addArgumentNode(
+                    cast(keyOutputs.get(i).expressionNode, keyCasts.get(i)),
+                    cast(valueOutputs.get(i).expressionNode, valueCasts.get(i)));
         }
 
-        for (int index = 0; index < values.size(); ++index) {
-            AExpression expression = values.get(index);
+        mapInitializationNode.setLocation(getLocation());
+        mapInitializationNode.setExpressionType(valueType);
+        mapInitializationNode.setConstructor(constructor);
+        mapInitializationNode.setMethod(method);
 
-            expression.expected = Definition.DEF_TYPE;
-            expression.internal = true;
-            expression.analyze(locals);
-            values.set(index, expression.cast(locals));
-        }
-    }
+        output.expressionNode = mapInitializationNode;
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
-
-        writer.newInstance(actual.type);
-        writer.dup();
-        writer.invokeConstructor(constructor.owner.type, constructor.method);
-
-        for (int index = 0; index < keys.size(); ++index) {
-            AExpression key = keys.get(index);
-            AExpression value = values.get(index);
-
-            writer.dup();
-            key.write(writer, globals);
-            value.write(writer, globals);
-            method.write(writer);
-            writer.pop();
-        }
-    }
-
-    @Override
-    public String toString() {
-        return singleLineToString(pairwiseToString(keys, values));
+        return output;
     }
 }
